@@ -27,7 +27,7 @@ export interface Repo {
   updateRun(id: string, patch: Partial<Run>, expectStep?: number): Promise<Run | null>;
   addCheckpoint(c: { run_id: string; seq: number; node: string; state: unknown; duration_ms: number }): Promise<void>;
   /** Highest-seq checkpoint matching the filter: `excludeNodes` drops by node; `statusIn` keeps only snapshots whose state.status is listed. */
-  lastCheckpoint(runId: string, filter?: { excludeNodes?: string[]; statusIn?: string[] }): Promise<{ seq: number; node: string; state: any } | null>;
+  lastCheckpoint(runId: string, filter?: { excludeNodes?: string[]; statusIn?: string[] }): Promise<{ seq: number; node: string; state: unknown } | null>;
   /** The run's checkpoints, seq ascending. */
   listCheckpoints(runId: string): Promise<CheckpointRow[]>;
   addAgentCall(a: Omit<AgentCallRow, "id" | "created_at">): Promise<string>;

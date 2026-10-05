@@ -1,12 +1,13 @@
 import { describe, it, expect } from "vitest";
-import { callLlm, LlmTimeoutError } from "@/lib/llm/client";
+import { callLlm, LlmTimeoutError, type LlmRequest } from "@/lib/llm/client";
+import type { AgentId, Purpose } from "@/lib/types";
 import { SharkOutputSchema } from "@/lib/schemas";
 import { SEED_PITCHES } from "@/lib/mock/seed-pitches";
 import { SCRIPTED_FOUNDER_REPLY } from "@/lib/mock/fixtures";
 
 const P = "claude-sonnet-5-5", H = "claude-haiku-4-5-20251001";
-const call = (pitchSlug: string, agent: any, attempt: number, turn: number, extra: Record<string, unknown> = {}) =>
-  callLlm({ pitchSlug, agent, purpose: "analyze", system: "", messages: [], model: P, attempt, turn, ...extra } as any);
+const call = (pitchSlug: string, agent: AgentId, attempt: number, turn: number, extra: Partial<LlmRequest> = {}) =>
+  callLlm({ pitchSlug, agent, purpose: "analyze", system: "", messages: [], model: P, attempt, turn, ...extra });
 
 it("every non-fast-pass pitch has a valid final fixture for every shark", async () => {
   for (const p of SEED_PITCHES.filter(p => p.slug !== "greengrid")) {
@@ -53,7 +54,7 @@ describe("mockCall scripted chaos", () => {
     expect(after.score).toBe(7);
   });
   it("lead purposes return JSON; greengrid fast-passes; thriftloop is heavy", async () => {
-    const lead = (slug: string, purpose: string) => callLlm({ pitchSlug: slug, agent: "lead", purpose: purpose as any, system: "", messages: [], model: P, attempt: 1, turn: 1 });
+    const lead = (slug: string, purpose: string) => callLlm({ pitchSlug: slug, agent: "lead", purpose: purpose as Purpose, system: "", messages: [], model: P, attempt: 1, turn: 1 });
     const g = await lead("greengrid", "triage");
     expect(JSON.parse(g.text).fast_pass).toBe(true);
     const t = await lead("thriftloop", "triage");

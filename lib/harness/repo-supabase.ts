@@ -7,7 +7,7 @@ import { initialRunState } from "./run-state";
 import { WORKING } from "@/lib/types";
 import type { Repo } from "./repo";
 
-type Row = Record<string, any>;
+type Row = Record<string, unknown>;
 const num = (v: unknown) => Number(v);
 const numOrNull = (v: unknown) => (v === null || v === undefined ? null : Number(v));
 
@@ -220,7 +220,7 @@ export class SupabaseRepo implements Repo {
     if (filter.kind) b = b.eq("kind", filter.kind);
     const { data, error } = await b.order("created_at", { ascending: true }).order("id", { ascending: true });
     if (error) this.fail("approvals", "select", error);
-    return (data ?? []).map(({ runs, ...a }: Row) => ({
+    return (data ?? []).map(({ runs, ...a }: Row & { runs: { status: Run["status"]; autonomy_level: Run["autonomy_level"]; pitches: Pick<Pitch, "company" | "sector"> } }) => ({
       ...toApproval(a), company: runs.pitches.company, sector: runs.pitches.sector, autonomy_level: runs.autonomy_level, run_status: runs.status,
     }));
   }
@@ -283,7 +283,7 @@ export class SupabaseRepo implements Repo {
     if (filter.run_id) b = b.eq("run_id", filter.run_id);
     const { data, error } = await b.order("created_at", { ascending: true }).order("id", { ascending: true });
     if (error) this.fail("incidents", "select", error);
-    return (data ?? []).map(({ runs, ...i }: Row) => ({ ...toIncident(i), company: runs.pitches.company, run_status: runs.status }));
+    return (data ?? []).map(({ runs, ...i }: Row & { runs: { status: Run["status"]; pitches: Pick<Pitch, "company"> } }) => ({ ...toIncident(i), company: runs.pitches.company, run_status: runs.status }));
   }
 
   async listAudit(f: AuditFilter) {
