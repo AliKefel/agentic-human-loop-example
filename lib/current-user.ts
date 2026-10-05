@@ -2,16 +2,13 @@ import "server-only";
 import { cookies } from "next/headers";
 import { createAdminClient } from "@/lib/supabase/server";
 import type { User } from "@/lib/types";
+import { PARTNER_ID, SEED_USERS } from "@/lib/mock/seed-users";
 
 export const ACTING_USER_COOKIE = "acting_user_id";
-export const DEFAULT_USER_ID = "00000000-0000-0000-0000-000000000002";
+export const DEFAULT_USER_ID = PARTNER_ID;
 
 // In-code copy of the seed users so the shell never crashes if the DB is unreachable.
-export const FALLBACK_USERS: User[] = [
-  { id: "00000000-0000-0000-0000-000000000001", name: "Avery Analyst", role: "analyst", approval_limit: 0, avatar_color: "#38bdf8" },
-  { id: DEFAULT_USER_ID, name: "Pat Partner", role: "partner", approval_limit: 250000, avatar_color: "#14b8a6" },
-  { id: "00000000-0000-0000-0000-000000000003", name: "Gen GP", role: "general_partner", approval_limit: 1e12, avatar_color: "#f59e0b" },
-];
+export const FALLBACK_USERS: User[] = SEED_USERS;
 
 export function resolveActingUser(users: User[], cookieId: string | undefined): User {
   return (

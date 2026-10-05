@@ -10,7 +10,7 @@ export interface Repo {
   getUser(id: string): Promise<User>;
   createRun(r: Pick<Run, "pitch_id" | "config_version" | "autonomy_level" | "started_by">): Promise<Run>;
   getRun(id: string): Promise<Run>;
-  /** compare-and-set: only applies if expectStep is undefined or run.step_count === expectStep. Returns updated run or null on conflict. Terminal-state handling is the caller's job (bump step_count). */
+  /** compare-and-set: applies only if expectStep is undefined or run.step_count === expectStep; returns the updated run, or null if the CAS was lost. Unknown id throws NotFoundError (null never means "not found"). There is NO terminal-status guard: callers bump step_count to invalidate in-flight steps. */
   updateRun(id: string, patch: Partial<Run>, expectStep?: number): Promise<Run | null>;
   addCheckpoint(c: { run_id: string; seq: number; node: string; state: unknown; duration_ms: number }): Promise<void>;
   lastCheckpoint(runId: string, filter?: { excludeNodes?: string[] }): Promise<{ seq: number; node: string; state: any } | null>;
@@ -18,11 +18,13 @@ export interface Repo {
   addToolCall(t: Omit<ToolCallRow, "id" | "created_at">): Promise<void>;
   addApproval(a: Omit<ApprovalRow, "id" | "created_at" | "status" | "decided_by" | "reason" | "decided_at" | "final_terms" | "is_override">): Promise<ApprovalRow>;
   getApproval(id: string): Promise<ApprovalRow>;
-  /** CAS on status='pending'; null if already decided */
+  /** CAS on status='pending'; null if already decided. Unknown id throws NotFoundError. */
   decideApprovalRow(id: string, patch: Pick<ApprovalRow, "status" | "decided_by" | "reason" | "final_terms" | "is_override">): Promise<ApprovalRow | null>;
+  /** Newest pending approval for the run, or null. */
   pendingApprovalForRun(runId: string): Promise<ApprovalRow | null>;
   addFounderMessage(m: { run_id: string; direction: "to_founder" | "from_founder"; body: string; author_id: string | null }): Promise<void>;
   addMemory(m: { scope: "firm" | "founder" | "partner"; subject: string; sector: string | null; content: string; source_run_id: string | null }): Promise<void>;
+  /** Newest first; ties broken by insertion order (later insert first). subject/sector match case-insensitively. */
   findMemories(q: { scope: "firm" | "founder" | "partner"; subject?: string; sector?: string; limit?: number }): Promise<MemoryRow[]>;
   addIncident(i: Omit<IncidentRow, "id" | "created_at" | "resolved_at" | "status">): Promise<IncidentRow>;
   audit(e: { actor_id: string | null; actor_role: string; action: string; entity: string; entity_id?: string; details?: Record<string, unknown> }): Promise<void>;

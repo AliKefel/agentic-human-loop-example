@@ -2,6 +2,8 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { createAdminClient } from "@/lib/supabase/server";
 import type { AgentCallRow, ApprovalRow, HarnessConfig, IncidentRow, MemoryRow, Pitch, Run, ToolCallRow, User } from "@/lib/types";
+import { NotFoundError } from "./errors";
+import { initialRunState } from "./run-state";
 import type { Repo } from "./repo";
 
 type Row = Record<string, any>;
@@ -34,6 +36,11 @@ export class SupabaseRepo implements Repo {
     if (!data) throw new Error(`${table}: not found (${col}=${val})`);
     return data;
   }
+  private async assertExists(table: string, id: string): Promise<void> {
+    const { data, error } = await this.db.from(table).select("id").eq("id", id).maybeSingle();
+    if (error) this.fail(table, "select", error);
+    if (!data) throw new NotFoundError(table, id);
+  }
   private async insert(table: string, row: Row): Promise<Row> {
     const { data, error } = await this.db.from(table).insert(row).select().single();
     if (error) this.fail(table, "insert", error);
@@ -47,7 +54,7 @@ export class SupabaseRepo implements Repo {
   async getUser(id: string) { return toUser(await this.one("users", "id", id)); }
 
   async createRun(r: Pick<Run, "pitch_id" | "config_version" | "autonomy_level" | "started_by">) {
-    return toRun(await this.insert("runs", { pitch_id: r.pitch_id, config_version: r.config_version, autonomy_level: r.autonomy_level, started_by: r.started_by }));
+    return toRun(await this.insert("runs", { pitch_id: r.pitch_id, config_version: r.config_version, autonomy_level: r.autonomy_level, started_by: r.started_by, state: initialRunState() }));
   }
   async getRun(id: string) { return toRun(await this.one("runs", "id", id)); }
   async updateRun(id: string, patch: Partial<Run>, expectStep?: number) {
@@ -55,7 +62,9 @@ export class SupabaseRepo implements Repo {
     if (expectStep !== undefined) q = q.eq("step_count", expectStep);
     const { data, error } = await q.select().maybeSingle();
     if (error) this.fail("runs", "update", error);
-    return data ? toRun(data) : null;
+    if (data) return toRun(data);
+    await this.assertExists("runs", id);
+    return null;
   }
 
   async addCheckpoint(c: { run_id: string; seq: number; node: string; state: unknown; duration_ms: number }) {
@@ -85,7 +94,9 @@ export class SupabaseRepo implements Repo {
   async decideApprovalRow(id: string, patch: Pick<ApprovalRow, "status" | "decided_by" | "reason" | "final_terms" | "is_override">) {
     const { data, error } = await this.db.from("approvals").update({ ...patch, decided_at: new Date().toISOString() }).eq("id", id).eq("status", "pending").select().maybeSingle();
     if (error) this.fail("approvals", "update", error);
-    return data ? toApproval(data) : null;
+    if (data) return toApproval(data);
+    await this.assertExists("approvals", id);
+    return null;
   }
   async pendingApprovalForRun(runId: string) {
     const { data, error } = await this.db.from("approvals").select("*").eq("run_id", runId).eq("status", "pending").order("created_at", { ascending: false }).limit(1).maybeSingle();
@@ -105,7 +116,7 @@ export class SupabaseRepo implements Repo {
     let b = this.db.from("memories").select("*").eq("scope", q.scope);
     if (q.subject !== undefined) b = b.ilike("subject", escapeLike(q.subject));
     if (q.sector !== undefined) b = b.ilike("sector", escapeLike(q.sector));
-    const { data, error } = await b.order("created_at", { ascending: false }).limit(q.limit ?? 10);
+    const { data, error } = await b.order("created_at", { ascending: false }).order("id", { ascending: false }).limit(q.limit ?? 10);
     if (error) this.fail("memories", "select", error);
     return (data ?? []).map(toMemory);
   }

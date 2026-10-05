@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { MemoryRepo } from "@/lib/harness/repo-memory";
 import { SYSTEM, actor } from "@/lib/harness/audit";
+import { NotFoundError } from "@/lib/harness/errors";
+import { initialRunState } from "@/lib/harness/run-state";
 import { CONFIG_V1 } from "@/lib/mock/seed-config";
 
 const GP = "00000000-0000-0000-0000-000000000003";
@@ -112,5 +114,32 @@ describe("MemoryRepo", () => {
     expect(Object.isFrozen(repo.auditLog[0].details)).toBe(true);
     expect(repo.auditLog[0].actor_role).toBe("system");
     expect(repo.auditLog[1]).toMatchObject({ actor_id: GP, actor_role: "general_partner", details: {} });
+  });
+
+  it("createRun state equals initialRunState()", async () => {
+    const run = await newRun(new MemoryRepo());
+    expect(run.state).toEqual(initialRunState());
+  });
+
+  it("unknown ids throw NotFoundError (null means lost CAS only)", async () => {
+    const repo = new MemoryRepo();
+    await expect(repo.updateRun("nope", { status: "triage" }, 0)).rejects.toBeInstanceOf(NotFoundError);
+    await expect(repo.decideApprovalRow("nope", { status: "approved", decided_by: null, reason: null, final_terms: null, is_override: false })).rejects.toBeInstanceOf(NotFoundError);
+  });
+
+  it("pendingApprovalForRun returns the newest pending", async () => {
+    const repo = new MemoryRepo();
+    const run = await newRun(repo);
+    await newApproval(repo, run.id);
+    const b = await newApproval(repo, run.id);
+    expect((await repo.pendingApprovalForRun(run.id))?.id).toBe(b.id);
+  });
+
+  it("findMemories is newest first, ties by insertion (later first)", async () => {
+    const repo = new MemoryRepo();
+    await repo.addMemory({ scope: "firm", subject: "A", sector: "S", content: "1", source_run_id: null });
+    await repo.addMemory({ scope: "firm", subject: "B", sector: "S", content: "2", source_run_id: null });
+    const got = (await repo.findMemories({ scope: "firm", sector: "S" })).map((m) => m.subject);
+    expect(got).toEqual(["B", "A"]);
   });
 });
