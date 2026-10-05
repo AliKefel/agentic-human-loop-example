@@ -5,6 +5,11 @@ import { SupabaseRepo } from "./repo-supabase";
 export interface Repo {
   getPitch(id: string): Promise<Pitch>;
   getPitchBySlug(slug: string): Promise<Pitch>;
+  /** Ordered by created_at, then company. */
+  listPitches(): Promise<Pitch[]>;
+  createPitch(p: Omit<Pitch, "id" | "created_at">): Promise<Pitch>;
+  /** Most recent run (by started_at) per pitch id; pitches without runs are absent. */
+  latestRunsByPitch(): Promise<Record<string, Pick<Run, "id" | "status" | "started_at">>>;
   getConfig(version: number): Promise<HarnessConfig>;
   getActiveConfig(): Promise<HarnessConfig>;
   getUser(id: string): Promise<User>;

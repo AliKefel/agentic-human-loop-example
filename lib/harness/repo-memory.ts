@@ -62,13 +62,31 @@ export class MemoryRepo implements Repo {
 
   async getPitch(id: string) {
     const p = this.pitches.find((x) => x.id === id);
-    if (!p) throw new Error(`pitches: not found (${id})`);
+    if (!p) throw new NotFoundError("pitches", id);
     return clone(p);
   }
   async getPitchBySlug(slug: string) {
     const p = this.pitches.find((x) => x.slug === slug);
-    if (!p) throw new Error(`pitches: not found (slug ${slug})`);
+    if (!p) throw new NotFoundError("pitches", `slug=${slug}`);
     return clone(p);
+  }
+  async listPitches() {
+    return [...this.pitches].sort((a, b) => (a.created_at < b.created_at ? -1 : a.created_at > b.created_at ? 1 : a.company < b.company ? -1 : a.company > b.company ? 1 : 0)).map(clone);
+  }
+  async createPitch(p: Omit<Pitch, "id" | "created_at">) {
+    if (this.pitches.some((x) => x.slug === p.slug)) throw new Error(`pitches: duplicate slug (${p.slug})`);
+    const row: Pitch = { ...clone(p), id: randomUUID(), created_at: new Date().toISOString() };
+    this.pitches.push(row);
+    return clone(row);
+  }
+  async latestRunsByPitch() {
+    const out: Record<string, Pick<Run, "id" | "status" | "started_at">> = {};
+    // later insert wins on equal started_at, matching "newest first"
+    this._runs.forEach((r) => {
+      const cur = out[r.pitch_id];
+      if (!cur || r.started_at >= cur.started_at) out[r.pitch_id] = { id: r.id, status: r.status, started_at: r.started_at };
+    });
+    return out;
   }
   async getConfig(version: number) {
     const c = this.configs.find((x) => x.version === version);

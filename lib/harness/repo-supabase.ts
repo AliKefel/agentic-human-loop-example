@@ -33,7 +33,7 @@ export class SupabaseRepo implements Repo {
   private async one(table: string, col: string, val: string | number): Promise<Row> {
     const { data, error } = await this.db.from(table).select("*").eq(col, val).maybeSingle();
     if (error) this.fail(table, "select", error);
-    if (!data) throw new Error(`${table}: not found (${col}=${val})`);
+    if (!data) throw new NotFoundError(table, `${col}=${val}`);
     return data;
   }
   private async assertExists(table: string, id: string): Promise<void> {
@@ -49,6 +49,19 @@ export class SupabaseRepo implements Repo {
 
   async getPitch(id: string) { return toPitch(await this.one("pitches", "id", id)); }
   async getPitchBySlug(slug: string) { return toPitch(await this.one("pitches", "slug", slug)); }
+  async listPitches() {
+    const { data, error } = await this.db.from("pitches").select("*").order("created_at", { ascending: true }).order("company", { ascending: true });
+    if (error) this.fail("pitches", "select", error);
+    return (data ?? []).map(toPitch);
+  }
+  async createPitch(p: Omit<Pitch, "id" | "created_at">) { return toPitch(await this.insert("pitches", p)); }
+  async latestRunsByPitch() {
+    const { data, error } = await this.db.from("runs").select("id,pitch_id,status,started_at").order("started_at", { ascending: false });
+    if (error) this.fail("runs", "select", error);
+    const out: Record<string, Pick<Run, "id" | "status" | "started_at">> = {};
+    for (const r of data ?? []) out[r.pitch_id] ??= { id: r.id, status: r.status, started_at: r.started_at };
+    return out;
+  }
   async getConfig(version: number) { return toConfig(await this.one("harness_configs", "version", version)); }
   async getActiveConfig() { return toConfig(await this.one("harness_configs", "is_active", "true")); }
   async getUser(id: string) { return toUser(await this.one("users", "id", id)); }
