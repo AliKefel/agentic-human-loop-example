@@ -6,6 +6,10 @@ import { NotFoundError } from "@/lib/harness/errors";
 import { AutoAdvance } from "@/components/run/auto-advance";
 import { RunActions } from "@/components/run/run-actions";
 import { getActingUser } from "@/lib/current-user";
+import { DecisionPanel } from "@/components/run/decision-panel";
+import { WAITING_FOR_KIND } from "@/lib/harness/approvals";
+import { queueItemFor, toQueueRow } from "@/lib/harness/queue-data";
+import type { Pitch, Run, User } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
@@ -15,6 +19,7 @@ export default async function RunPage({ params }: { params: Promise<{ id: string
   const { id } = await params;
   if (!UUID.test(id)) notFound();
   const [{ run, pitch }, user] = await Promise.all([load(id), getActingUser()]);
+  const review = await loadReview(run, pitch, user);
   return (
     <Card className="max-w-xl">
       <CardHeader>
@@ -28,11 +33,24 @@ export default async function RunPage({ params }: { params: Promise<{ id: string
         {run.state.triage && <p>Triage: {run.state.triage.fast_pass ? "fast-pass" : "full review"} — {run.state.triage.reason}</p>}
         {run.state.prescan && <p>Prescan flags: {run.state.prescan.length ? run.state.prescan.map((f) => f.code).join(", ") : "none"}</p>}
         {run.plan && <p>Plan: {run.plan.sharks.join(", ")} — {run.plan.rationale}</p>}
-        {run.decision && <p>Decision: {run.decision.outcome.replace(/_/g, " ")} ({run.decision.rule}) — {run.decision.explanation}</p>}
+        {run.decision && <DecisionPanel decision={run.decision} item={review.item} user={user} memories={review.memories} />}
+        {run.final_terms && <p>Final terms: ${run.final_terms.amount.toLocaleString("en-US")} for {run.final_terms.equity_pct}%</p>}
         {run.error && <p className="text-destructive">Error: {run.error}</p>}
       </CardContent>
     </Card>
   );
+}
+
+/** The pending approval for a waiting run, shaped for the review drawer. */
+async function loadReview(run: Run, pitch: Pitch, user: User) {
+  const repo = getRepo();
+  const approval = await repo.pendingApprovalForRun(run.id);
+  if (!approval || WAITING_FOR_KIND[approval.kind] !== run.status) return { item: null, memories: [] };
+  const [item, memories] = await Promise.all([
+    queueItemFor(repo, toQueueRow(approval, run, pitch), run),
+    repo.findMemories({ scope: "partner", subject: user.name }),
+  ]);
+  return { item, memories: memories.map((m) => m.content) };
 }
 
 async function load(id: string) {

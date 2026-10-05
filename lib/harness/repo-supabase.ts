@@ -1,7 +1,7 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { createAdminClient } from "@/lib/supabase/server";
-import type { AgentCallRow, ApprovalRow, HarnessConfig, IncidentRow, MemoryRow, Pitch, Run, ToolCallRow, User } from "@/lib/types";
+import type { AgentCallRow, ApprovalQueueRow, ApprovalRow, HarnessConfig, IncidentRow, MemoryRow, Pitch, Run, ToolCallRow, User } from "@/lib/types";
 import { NotFoundError } from "./errors";
 import { initialRunState } from "./run-state";
 import type { Repo } from "./repo";
@@ -116,6 +116,18 @@ export class SupabaseRepo implements Repo {
     const { data, error } = await this.db.from("approvals").select("*").eq("run_id", runId).eq("status", "pending").order("created_at", { ascending: false }).limit(1).maybeSingle();
     if (error) this.fail("approvals", "select", error);
     return data ? toApproval(data) : null;
+  }
+
+  async listApprovals(filter: { status?: "pending" | "decided"; kind?: ApprovalRow["kind"] } = {}): Promise<ApprovalQueueRow[]> {
+    let b = this.db.from("approvals").select("*, runs!inner(status, autonomy_level, pitches!inner(company, sector))");
+    if (filter.status === "pending") b = b.eq("status", "pending");
+    if (filter.status === "decided") b = b.neq("status", "pending");
+    if (filter.kind) b = b.eq("kind", filter.kind);
+    const { data, error } = await b.order("created_at", { ascending: true }).order("id", { ascending: true });
+    if (error) this.fail("approvals", "select", error);
+    return (data ?? []).map(({ runs, ...a }: Row) => ({
+      ...toApproval(a), company: runs.pitches.company, sector: runs.pitches.sector, autonomy_level: runs.autonomy_level, run_status: runs.status,
+    }));
   }
 
   async addFounderMessage(m: { run_id: string; direction: "to_founder" | "from_founder"; body: string; author_id: string | null }) {

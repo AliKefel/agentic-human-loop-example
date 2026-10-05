@@ -41,7 +41,7 @@ describe("M3 parallel sharks", () => {
 
   it("brewbot: four shark outputs, one agent_call each, tool calls recorded", async () => {
     const { repo, run } = await runPitch("brewbot");
-    expect(run.status).toBe("passed"); // policy_check stub until M5
+    expect(run.status).toBe("offer_sent"); // L2 auto-send (M5 policy)
     expect(Object.keys(run.state.shark_outputs).sort()).toEqual([...SHARKS].sort());
     expect(run.state.shark_failures).toEqual({});
     expect(run.degraded).toBe(false);

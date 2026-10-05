@@ -108,7 +108,7 @@ describe("resumeRun", () => {
       expect(audit[0]).toMatchObject({ actor_id: GP_ID, entity_id: run.id, details: { from_seq: 1 } });
       restore();
       const done = await runToRest(repo, run.id);
-      expect(done.status).toBe("passed");
+      expect(done.status).toBe("offer_sent");
       expect(done.tokens_used).toBeGreaterThan(680);
     } finally {
       restore();

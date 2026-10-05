@@ -33,7 +33,7 @@ describe("lead calls use the reliability layer", () => {
     const { repo, run } = await runPitch("brewbot");
     const plan = repo.agentCalls.filter((a) => a.run_id === run.id && a.purpose === "plan");
     expect(plan.map((a) => [a.status, a.attempt, a.fallback_used])).toEqual([["schema_fail", 1, false], ["ok", 2, false]]);
-    expect(run.status).toBe("passed");
+    expect(run.status).toBe("offer_sent");
     expect(run.plan?.sharks).toContain("skeptic");
   });
 
@@ -43,6 +43,6 @@ describe("lead calls use the reliability layer", () => {
     expect(triage.map((a) => a.status)).toEqual(["schema_fail", "schema_fail", "schema_fail", "ok"]);
     expect(triage.map((a) => a.fallback_used)).toEqual([false, false, false, true]);
     expect(triage[3].model).toBe("claude-haiku-4-5-20251001");
-    expect(run.status).toBe("passed");
+    expect(run.status).toBe("offer_sent");
   });
 });

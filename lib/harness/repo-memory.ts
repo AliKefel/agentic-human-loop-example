@@ -4,7 +4,7 @@ import { initialRunState } from "./run-state";
 import { SEED_USERS } from "@/lib/mock/seed-users";
 import { CONFIG_V1 } from "@/lib/mock/seed-config";
 import { SEED_PITCHES } from "@/lib/mock/seed-pitches";
-import type { AgentCallRow, ApprovalRow, AuditRow, CheckpointRow, FounderMessageRow, HarnessConfig, IncidentRow, MemoryRow, Pitch, Run, ToolCallRow, User } from "@/lib/types";
+import type { AgentCallRow, ApprovalQueueRow, ApprovalRow, AuditRow, CheckpointRow, FounderMessageRow, HarnessConfig, IncidentRow, MemoryRow, Pitch, Run, ToolCallRow, User } from "@/lib/types";
 import type { Repo } from "./repo";
 
 const SEED_MEMORIES: Omit<MemoryRow, "id" | "created_at" | "source_run_id">[] = [
@@ -172,7 +172,7 @@ export class MemoryRepo implements Repo {
   }
   async getApproval(id: string) {
     const a = this._approvals.find((x) => x.id === id);
-    if (!a) throw new Error(`approvals: not found (${id})`);
+    if (!a) throw new NotFoundError("approvals", id);
     return clone(a);
   }
   async decideApprovalRow(id: string, patch: Pick<ApprovalRow, "status" | "decided_by" | "reason" | "final_terms" | "is_override">) {
@@ -185,6 +185,20 @@ export class MemoryRepo implements Repo {
   async pendingApprovalForRun(runId: string) {
     const a = this._approvals.filter((x) => x.run_id === runId && x.status === "pending").at(-1);
     return a ? clone(a) : null;
+  }
+
+  async listApprovals(filter: { status?: "pending" | "decided"; kind?: ApprovalRow["kind"] } = {}): Promise<ApprovalQueueRow[]> {
+    const out: ApprovalQueueRow[] = [];
+    for (const a of this._approvals) {
+      if (filter.status === "pending" && a.status !== "pending") continue;
+      if (filter.status === "decided" && a.status === "pending") continue;
+      if (filter.kind && a.kind !== filter.kind) continue;
+      const run = this._runs.find((r) => r.id === a.run_id);
+      const pitch = run && this.pitches.find((p) => p.id === run.pitch_id);
+      if (!run || !pitch) continue; // inner join
+      out.push({ ...clone(a), company: pitch.company, sector: pitch.sector, autonomy_level: run.autonomy_level, run_status: run.status });
+    }
+    return out.sort((x, y) => (x.created_at < y.created_at ? -1 : x.created_at > y.created_at ? 1 : 0));
   }
 
   async addFounderMessage(m: { run_id: string; direction: "to_founder" | "from_founder"; body: string; author_id: string | null }) {

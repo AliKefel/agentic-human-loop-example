@@ -36,7 +36,7 @@ describe("advanceRun / state machine", () => {
     const repo = new MemoryRepo();
     const run = await start(repo, "brewbot");
     const done = await runToRest(repo, run.id);
-    expect(done.status).toBe("passed");
+    expect(done.status).toBe("offer_sent");
     expect(done.plan?.sharks).toContain("skeptic");
     expect(done.state.triage).toEqual({ fast_pass: false, reason: expect.any(String) });
     expect(done.step_count).toBe(6);

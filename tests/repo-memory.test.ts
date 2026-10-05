@@ -143,3 +143,30 @@ describe("MemoryRepo", () => {
     expect(got).toEqual(["B", "A"]);
   });
 });
+
+describe("MemoryRepo.listApprovals", () => {
+  it("joins run + pitch fields and filters by status and kind (oldest first)", async () => {
+    const { MemoryRepo: R } = await import("@/lib/harness/repo-memory");
+    const repo = new R();
+    const pitch = await repo.getPitchBySlug("pawprint");
+    const run = await repo.createRun({ pitch_id: pitch.id, config_version: 1, autonomy_level: 2, started_by: null });
+    await repo.updateRun(run.id, { status: "awaiting_approval" });
+    const base = { run_id: run.id, required_role: "partner" as const, rule_fired: "r", ai_recommendation: "invest" as const, original_terms: { amount: 1, equity_pct: 1 }, sla_due: new Date().toISOString() };
+    const a1 = await repo.addApproval({ ...base, kind: "approval" });
+    const a2 = await repo.addApproval({ ...base, kind: "exception" });
+    await repo.decideApprovalRow(a2.id, { status: "approved", decided_by: null, reason: null, final_terms: null, is_override: false });
+    const all = await repo.listApprovals();
+    expect(all.map((a) => a.id)).toEqual([a1.id, a2.id]);
+    expect(all[0]).toMatchObject({ company: "PawPrint DNA", sector: pitch.sector, autonomy_level: 2, run_status: "awaiting_approval", kind: "approval" });
+    expect((await repo.listApprovals({ status: "pending" })).map((a) => a.id)).toEqual([a1.id]);
+    expect((await repo.listApprovals({ status: "decided" })).map((a) => a.id)).toEqual([a2.id]);
+    expect((await repo.listApprovals({ kind: "exception" })).map((a) => a.id)).toEqual([a2.id]);
+    expect(await repo.listApprovals({ status: "pending", kind: "exception" })).toEqual([]);
+  });
+
+  it("getApproval unknown id throws NotFoundError", async () => {
+    const { MemoryRepo: R } = await import("@/lib/harness/repo-memory");
+    const { NotFoundError: NF } = await import("@/lib/harness/errors");
+    await expect(new R().getApproval("nope")).rejects.toBeInstanceOf(NF);
+  });
+});

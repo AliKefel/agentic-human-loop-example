@@ -1,5 +1,5 @@
 import "server-only";
-import type { AgentCallRow, ApprovalRow, HarnessConfig, IncidentRow, MemoryRow, Pitch, Run, ToolCallRow, User } from "@/lib/types";
+import type { AgentCallRow, ApprovalQueueRow, ApprovalRow, HarnessConfig, IncidentRow, MemoryRow, Pitch, Run, ToolCallRow, User } from "@/lib/types";
 import { SupabaseRepo } from "./repo-supabase";
 
 export interface Repo {
@@ -28,6 +28,8 @@ export interface Repo {
   decideApprovalRow(id: string, patch: Pick<ApprovalRow, "status" | "decided_by" | "reason" | "final_terms" | "is_override">): Promise<ApprovalRow | null>;
   /** Newest pending approval for the run, or null. */
   pendingApprovalForRun(runId: string): Promise<ApprovalRow | null>;
+  /** Approvals joined with run/pitch fields; status "decided" = anything but pending. Oldest first (created_at, then id). */
+  listApprovals(filter?: { status?: "pending" | "decided"; kind?: ApprovalRow["kind"] }): Promise<ApprovalQueueRow[]>;
   addFounderMessage(m: { run_id: string; direction: "to_founder" | "from_founder"; body: string; author_id: string | null }): Promise<void>;
   addMemory(m: { scope: "firm" | "founder" | "partner"; subject: string; sector: string | null; content: string; source_run_id: string | null }): Promise<void>;
   /** Newest first; ties broken by insertion order (later insert first). subject/sector match case-insensitively. */

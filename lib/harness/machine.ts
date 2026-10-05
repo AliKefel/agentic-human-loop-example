@@ -1,5 +1,5 @@
 import { PlanSchema, TriageSchema } from "@/lib/schemas";
-import { TERMINAL, WORKING, type Run, type RunState, type RunStatus } from "@/lib/types";
+import { TERMINAL, WORKING, type ApprovalRow, type PolicyOutcome, type Run, type RunState, type RunStatus } from "@/lib/types";
 import type { Repo } from "./repo";
 import { SYSTEM } from "./audit";
 import { callAgentJson, type StepCtx } from "./agent";
@@ -7,6 +7,7 @@ import { exceedsFundMax, prescan } from "./prescan";
 import { buildPlanPrompt, buildTriagePrompt } from "./planner";
 import { runSharks } from "./sharks";
 import { synthesize } from "./synthesis";
+import { decide } from "./policy";
 
 export type { StepCtx } from "./agent";
 export type AdvanceResult = { status: "advanced" | "conflict" | "idle"; run: Run };
@@ -91,11 +92,49 @@ const synthesizing: Handler = async (ctx) => {
   const synthesis = await synthesize(ctx); // terms already clamped to ask / fund max
   return { status: "policy_check", patch: { state: withState(ctx.run, { synthesis }), recommendation: synthesis.recommendation } };
 };
-// M5 replaces — temporary stub: deterministic policy engine
-const policyCheckStub: Handler = async () => ({
-  status: "passed",
-  patch: { decision: { outcome: "auto_pass", rule: "m2.stub", explanation: "M2 stub: policy engine not yet implemented (M5)." } },
-});
+/** Run status and approval kind for each policy outcome (SPEC §2.8 / §2.9). */
+const OUTCOME_MAP: Record<PolicyOutcome, { status: RunStatus; kind?: ApprovalRow["kind"] }> = {
+  auto_send: { status: "offer_sent" },
+  auto_pass: { status: "passed" },
+  needs_approval: { status: "awaiting_approval", kind: "approval" },
+  exception: { status: "in_review", kind: "exception" },
+  escalate: { status: "escalated", kind: "escalation" }, // incident added in M6
+  need_info: { status: "awaiting_founder" }, // founder message added in M6
+};
+
+const policyCheck: Handler = async (ctx) => {
+  const { run, config, repo } = ctx;
+  const synthesis = run.state.synthesis;
+  if (!synthesis) throw new Error("policy_check without a synthesis");
+  const decision = decide({
+    autonomyLevel: run.autonomy_level, config, prescan: run.state.prescan ?? [], outputs: run.state.shark_outputs,
+    failures: run.state.shark_failures, degraded: run.degraded, founderAsked: run.state.founder_asked, synthesis,
+  });
+  const { status, kind } = OUTCOME_MAP[decision.outcome];
+  const patch: Partial<Run> = { decision, ...(decision.outcome === "auto_send" ? { final_terms: synthesis.terms } : {}) };
+
+  const effects = async (committed: Run) => {
+    await repo.audit({ ...SYSTEM, action: "policy.decided", entity: "run", entity_id: run.id, details: { rule: decision.rule, outcome: decision.outcome } });
+    if (decision.outcome === "auto_send") {
+      await repo.audit({ ...SYSTEM, action: "offer.sent", entity: "run", entity_id: run.id, details: { terms: committed.final_terms, rule: decision.rule } });
+    }
+    if (!kind) return;
+    // A cancel may have landed after the CAS: never open an approval on a run that is no longer waiting for it.
+    if ((await repo.getRun(run.id)).status !== status) return;
+    const required_role = decision.required_role ?? "partner";
+    const approval = await repo.addApproval({
+      run_id: run.id, kind, required_role, rule_fired: decision.rule, ai_recommendation: synthesis.recommendation,
+      original_terms: synthesis.terms, sla_due: new Date(Date.now() + config.thresholds.sla_hours[kind] * 3600e3).toISOString(),
+    });
+    // Close the race window: if a cancel landed while inserting, it could not see this row — close it ourselves.
+    if ((await repo.getRun(run.id)).status !== status) {
+      await repo.decideApprovalRow(approval.id, { status: "rejected", decided_by: null, reason: "run cancelled", final_terms: null, is_override: false });
+      return;
+    }
+    await repo.audit({ ...SYSTEM, action: "approval.requested", entity: "approval", entity_id: approval.id, details: { kind, required_role, rule: decision.rule } });
+  };
+  return { status, patch, effects };
+};
 
 export const HANDLERS: Partial<Record<RunStatus, Handler>> = {
   queued,
@@ -103,7 +142,7 @@ export const HANDLERS: Partial<Record<RunStatus, Handler>> = {
   planning,
   analyzing,
   synthesizing,
-  policy_check: policyCheckStub, // M5 replaces
+  policy_check: policyCheck,
 };
 
 /** Full run snapshot per SPEC §2.3 (values after the step), including budget used. */
