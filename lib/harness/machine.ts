@@ -172,7 +172,7 @@ export async function advanceRun(repo: Repo, runId: string): Promise<AdvanceResu
   try {
     result = await handler(ctx);
   } catch (e) {
-    // Shark calls already retried / fell back inside the handler (reliability.ts); anything
+    // Lead and Shark LLM calls already retried / fell back inside the handler (reliability.ts); anything
     // that still escapes a handler is unrecoverable for this step and fails the run.
     return failRun(repo, run, e instanceof Error ? e.message : String(e), ctx.usage);
   }
@@ -204,7 +204,7 @@ export async function advanceRun(repo: Repo, runId: string): Promise<AdvanceResu
     try {
       await result.effects(updated);
     } catch (e) {
-      // The step is already committed; record the failure rather than un-committing (M4 hardens this).
+      // The step is already committed; record the failure rather than un-committing.
       console.error(`run ${run.id}: effects for ${run.status} failed`, e);
       await repo.audit({ ...SYSTEM, action: "run.effects_failed", entity: "run", entity_id: run.id, details: { node: run.status, error: e instanceof Error ? e.message : String(e) } });
     }

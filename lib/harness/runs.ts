@@ -40,20 +40,22 @@ export async function cancelRun(repo: Repo, runId: string, user: User): Promise<
 
 /**
  * Resume from checkpoint (SPEC §2.3): GP only, failed runs only. Restores the last checkpoint
- * whose snapshot status is a WORKING status and continues from that node.
+ * whose snapshot status is a WORKING status and continues from that node. Spend is never rolled
+ * back: tokens_used / cost_usd keep the run's current totals (including the failed step).
  */
 export async function resumeRun(repo: Repo, runId: string, user: User): Promise<Run> {
   if (user.role !== "general_partner") throw new ForbiddenError("Only a General Partner can resume a run");
   const run = await repo.getRun(runId);
   if (run.status !== "failed") throw new ConflictError(`Only failed runs can be resumed (run is ${run.status})`);
+  if (run.error === "max_steps_exceeded") throw new ConflictError("cannot resume: max steps exceeded");
   const cp = await repo.lastCheckpoint(runId, { statusIn: WORKING });
   if (!cp) throw new ConflictError("No resumable checkpoint for this run");
-  const s = cp.state as Pick<Run, "status" | "state" | "plan" | "decision" | "degraded" | "recommendation" | "final_terms" | "tokens_used" | "cost_usd" | "replans">;
+  const s = cp.state as Pick<Run, "status" | "state" | "plan" | "decision" | "degraded" | "recommendation" | "final_terms" | "replans">;
   const updated = await repo.updateRun(
     runId,
     {
       status: s.status, state: s.state, plan: s.plan, decision: s.decision, degraded: s.degraded,
-      recommendation: s.recommendation, final_terms: s.final_terms, tokens_used: s.tokens_used, cost_usd: s.cost_usd, replans: s.replans,
+      recommendation: s.recommendation, final_terms: s.final_terms, replans: s.replans,
       error: null, completed_at: null, step_count: run.step_count + 1,
     },
     run.step_count,

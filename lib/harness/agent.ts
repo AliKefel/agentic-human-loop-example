@@ -4,6 +4,7 @@ import { costUsd } from "@/lib/llm/pricing";
 import { extractJson } from "@/lib/llm/json";
 import type { AgentCallRow, AgentId, HarnessConfig, Pitch, Purpose, Run } from "@/lib/types";
 import type { Repo } from "./repo";
+import { withReliability } from "./reliability";
 
 export type StepCtx = { repo: Repo; run: Run; pitch: Pitch; config: HarnessConfig; usage: { tokens: number; cost: number } };
 
@@ -18,32 +19,49 @@ export class AgentCallError extends Error {
 const parseJsonText = extractJson;
 
 /**
- * One LLM call that must return JSON matching `schema`. Records exactly one agent_calls row
- * and accumulates tokens/cost into ctx.usage. Throws AgentCallError on any failure.
- * M2: single attempt on the primary model (M4 adds retries + fallback).
+ * An LLM call that must return JSON matching `schema`, run through the reliability layer
+ * (SPEC §2.7): retries with backoff on the primary model, then one fallback attempt. Each
+ * attempt records exactly one agent_calls row and accumulates tokens/cost into ctx.usage.
+ * Throws the last attempt's AgentCallError when every attempt fails.
  */
 export async function callAgentJson<T>(
   ctx: StepCtx,
   opts: { agent: AgentId; purpose: Purpose; system: string; user: string; schema: z.ZodType<T>; variant?: string },
 ): Promise<T> {
-  const model = ctx.config.reliability.primary_model;
-  const attempt = 1;
+  let lastError: unknown = new AgentCallError("error", `${opts.agent}/${opts.purpose}: no attempt made`);
+  const r = await withReliability(ctx.config.reliability, async ({ model, attempt, signal, fallback }) => {
+    try {
+      return await callAgentJsonOnce(ctx, opts, model, attempt, signal, fallback);
+    } catch (e) {
+      lastError = e;
+      throw e;
+    }
+  });
+  if (r.ok) return r.value as T;
+  throw lastError;
+}
+
+/** One attempt: records exactly one agent_calls row. Throws AgentCallError on timeout / error / schema_fail. */
+async function callAgentJsonOnce<T>(
+  ctx: StepCtx,
+  opts: { agent: AgentId; purpose: Purpose; system: string; user: string; schema: z.ZodType<T>; variant?: string },
+  model: string,
+  attempt: number,
+  signal: AbortSignal,
+  fallback: boolean,
+): Promise<T> {
   const started = Date.now();
-  const ac = new AbortController();
-  const timer = setTimeout(() => ac.abort(), ctx.config.reliability.timeout_ms);
-  const base = { run_id: ctx.run.id, agent: opts.agent, purpose: opts.purpose, model, attempt, fallback_used: false };
+  const base = { run_id: ctx.run.id, agent: opts.agent, purpose: opts.purpose, model, attempt, fallback_used: fallback };
 
   let res: LlmResponse;
   try {
-    res = await callLlm({ pitchSlug: ctx.pitch.slug, agent: opts.agent, purpose: opts.purpose, system: opts.system, messages: [{ role: "user", content: opts.user }], model, attempt, turn: 1, signal: ac.signal, variant: opts.variant });
+    res = await callLlm({ pitchSlug: ctx.pitch.slug, agent: opts.agent, purpose: opts.purpose, system: opts.system, messages: [{ role: "user", content: opts.user }], model, attempt, turn: 1, signal, variant: opts.variant });
   } catch (e) {
-    const timeout = e instanceof LlmTimeoutError || ac.signal.aborted;
+    const timeout = e instanceof LlmTimeoutError || signal.aborted;
     const status = timeout ? "timeout" : "error";
     const message = e instanceof Error ? e.message : String(e);
     await ctx.repo.addAgentCall({ ...base, input_tokens: 0, output_tokens: 0, cost_usd: 0, latency_ms: Date.now() - started, status, error: message, output: null });
     throw new AgentCallError(status, `${opts.agent}/${opts.purpose}: ${status}: ${message}`);
-  } finally {
-    clearTimeout(timer);
   }
 
   const cost = costUsd(res.model, res.inputTokens, res.outputTokens);

@@ -166,6 +166,7 @@ export async function runSharks(ctx: StepCtx, agents: AgentName[], variant?: str
   const { config, run, repo } = ctx;
   const est = config.budgets.est_tokens_per_shark;
   const used = { tokens: run.tokens_used + ctx.usage.tokens, cost: +(run.cost_usd + ctx.usage.cost).toFixed(6) };
+  // The cap gates Shark launches only — lead synthesis and in-flight retries may exceed it slightly.
   let reserved = used.tokens;
   const included: AgentName[] = [];
   const skipped = new Set<AgentName>();

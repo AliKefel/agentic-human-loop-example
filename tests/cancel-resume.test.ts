@@ -15,16 +15,15 @@ async function start(repo: MemoryRepo, slug: string) {
   return createRun(repo, { pitchId: pitch.id, user: GP });
 }
 
-/** Fails a brewbot run at the triage step (no mock fixture for the slug). Returns a restore fn. */
+/** Fails a brewbot run at the triage step AFTER the triage LLM call spent tokens. Returns a restore fn. */
 async function failAtTriage(repo: MemoryRepo, runId: string) {
-  await advanceRun(repo, runId); // queued -> triage (checkpoint seq 1, status triage)
-  const run = await repo.getRun(runId);
-  const pitch = (repo as unknown as { pitches: { id: string; slug: string }[] }).pitches.find((p) => p.id === run.pitch_id)!;
-  const slug = pitch.slug;
-  pitch.slug = "no-fixture";
+  await advanceRun(repo, runId); // queued -> triage (checkpoint seq 1, status triage, 0 tokens)
+  const original = HANDLERS.triage!;
+  HANDLERS.triage = async (ctx) => { await original(ctx); throw new Error("downstream blew up"); };
   const r = await advanceRun(repo, runId);
   expect(r.run.status).toBe("failed");
-  return () => { pitch.slug = slug; };
+  expect(r.run.tokens_used).toBe(600 + 80); // failRun recorded the failed step's spend
+  return () => { HANDLERS.triage = original; };
 }
 
 describe("cancelRun", () => {
@@ -90,21 +89,38 @@ describe("cancelRun", () => {
 });
 
 describe("resumeRun", () => {
-  it("partner forbidden; GP restores a failed run from the last working checkpoint", async () => {
+  it("partner forbidden; GP restores a failed run from the last working checkpoint, keeping spend", async () => {
     const repo = new MemoryRepo();
     const run = await start(repo, "brewbot");
     const restore = await failAtTriage(repo, run.id);
-    await expect(resumeRun(repo, run.id, PARTNER)).rejects.toBeInstanceOf(ForbiddenError);
-    await expect(resumeRun(repo, run.id, ANALYST)).rejects.toBeInstanceOf(ForbiddenError);
-    const failed = await repo.getRun(run.id);
-    const resumed = await resumeRun(repo, run.id, GP);
-    expect(resumed).toMatchObject({ status: "triage", error: null, completed_at: null, step_count: failed.step_count + 1, tokens_used: 0, cost_usd: 0 });
-    const audit = repo.auditLog.filter((a) => a.action === "run.resumed");
-    expect(audit).toHaveLength(1);
-    expect(audit[0]).toMatchObject({ actor_id: GP_ID, entity_id: run.id, details: { from_seq: 1 } });
-    restore();
-    const done = await runToRest(repo, run.id);
-    expect(done.status).toBe("passed");
+    try {
+      await expect(resumeRun(repo, run.id, PARTNER)).rejects.toBeInstanceOf(ForbiddenError);
+      await expect(resumeRun(repo, run.id, ANALYST)).rejects.toBeInstanceOf(ForbiddenError);
+      // the failed triage step spent tokens (snapshot at seq 1 has 0) — resume must not drop them
+      const failed = await repo.getRun(run.id);
+      const resumed = await resumeRun(repo, run.id, GP);
+      expect(resumed).toMatchObject({ status: "triage", error: null, completed_at: null, step_count: failed.step_count + 1 });
+      expect(resumed.tokens_used).toBe(680);
+      expect(resumed.cost_usd).toBe(failed.cost_usd);
+      expect(resumed.cost_usd).toBeGreaterThan(0);
+      const audit = repo.auditLog.filter((a) => a.action === "run.resumed");
+      expect(audit).toHaveLength(1);
+      expect(audit[0]).toMatchObject({ actor_id: GP_ID, entity_id: run.id, details: { from_seq: 1 } });
+      restore();
+      const done = await runToRest(repo, run.id);
+      expect(done.status).toBe("passed");
+      expect(done.tokens_used).toBeGreaterThan(680);
+    } finally {
+      restore();
+    }
+  });
+
+  it("max_steps_exceeded runs cannot be resumed", async () => {
+    const repo = new MemoryRepo();
+    const run = await start(repo, "brewbot");
+    await advanceRun(repo, run.id);
+    await repo.updateRun(run.id, { status: "failed", error: "max_steps_exceeded", completed_at: new Date().toISOString() });
+    await expect(resumeRun(repo, run.id, GP)).rejects.toThrow(new ConflictError("cannot resume: max steps exceeded"));
   });
 
   it("resume a non-failed run → ConflictError", async () => {
@@ -125,7 +141,7 @@ describe("resumeRun", () => {
     expect(resumed.status).toBe("synthesizing");
     expect(resumed.plan).toEqual(r.plan);
     expect(resumed.state.shark_outputs).toEqual(r.state.shark_outputs);
-    expect(resumed.tokens_used).toBe(r.tokens_used);
+    expect(resumed.tokens_used).toBe(r.tokens_used); // unchanged current spend
     expect(repo.auditLog.find((a) => a.action === "run.resumed")?.details).toEqual({ from_seq: 4 });
   });
 });
