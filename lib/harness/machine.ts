@@ -5,6 +5,8 @@ import { SYSTEM } from "./audit";
 import { callAgentJson, type StepCtx } from "./agent";
 import { exceedsFundMax, prescan } from "./prescan";
 import { buildPlanPrompt, buildTriagePrompt } from "./planner";
+import { runSharks } from "./sharks";
+import { synthesize } from "./synthesis";
 
 export type { StepCtx } from "./agent";
 export type AdvanceResult = { status: "advanced" | "conflict" | "idle"; run: Run };
@@ -65,10 +67,30 @@ const planning: Handler = async (ctx) => {
   return { status: "analyzing", patch: { plan } };
 };
 
-// M3 replaces — temporary stub: parallel Sharks
-const analyzingStub: Handler = async () => ({ status: "synthesizing" });
-// M3 replaces — temporary stub: Lead Shark synthesis
-const synthesizingStub: Handler = async () => ({ status: "policy_check" });
+const analyzing: Handler = async (ctx) => {
+  const { run } = ctx;
+  if (!run.plan) throw new Error("analyzing without a plan");
+  const agents = run.state.rerun ?? run.plan.sharks; // replan / founder answer reruns only the named Sharks
+  const results = await runSharks(ctx, agents);
+  const shark_outputs = { ...run.state.shark_outputs };
+  const shark_failures = { ...run.state.shark_failures };
+  for (const r of results) {
+    if (r.output) {
+      shark_outputs[r.agent] = r.output;
+      delete shark_failures[r.agent];
+    } else {
+      shark_failures[r.agent] = r.failure ?? "failed";
+      delete shark_outputs[r.agent];
+    }
+  }
+  const degraded = Object.keys(shark_failures).length > 0;
+  return { status: "synthesizing", patch: { state: withState(run, { shark_outputs, shark_failures, rerun: undefined }), degraded } };
+};
+
+const synthesizing: Handler = async (ctx) => {
+  const synthesis = await synthesize(ctx); // terms already clamped to ask / fund max
+  return { status: "policy_check", patch: { state: withState(ctx.run, { synthesis }), recommendation: synthesis.recommendation } };
+};
 // M5 replaces — temporary stub: deterministic policy engine
 const policyCheckStub: Handler = async () => ({
   status: "passed",
@@ -79,8 +101,8 @@ export const HANDLERS: Partial<Record<RunStatus, Handler>> = {
   queued,
   triage,
   planning,
-  analyzing: analyzingStub, // M3 replaces
-  synthesizing: synthesizingStub, // M3 replaces
+  analyzing,
+  synthesizing,
   policy_check: policyCheckStub, // M5 replaces
 };
 

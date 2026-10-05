@@ -1,6 +1,7 @@
 import type { z } from "zod";
 import { callLlm, LlmTimeoutError, type LlmResponse } from "@/lib/llm/client";
 import { costUsd } from "@/lib/llm/pricing";
+import { extractJson } from "@/lib/llm/json";
 import type { AgentCallRow, AgentId, HarnessConfig, Pitch, Purpose, Run } from "@/lib/types";
 import type { Repo } from "./repo";
 
@@ -13,13 +14,8 @@ export class AgentCallError extends Error {
   }
 }
 
-/**
- * Extracts JSON from model text. M2: strict JSON.parse on the trimmed text.
- * Single call site — M3 swaps this for a robust extractJson (fences, prose around JSON).
- */
-function parseJsonText(text: string): unknown {
-  return JSON.parse(text.trim());
-}
+/** Extracts JSON from model text (fences, prose around JSON). Single parse site for lead calls. */
+const parseJsonText = extractJson;
 
 /**
  * One LLM call that must return JSON matching `schema`. Records exactly one agent_calls row

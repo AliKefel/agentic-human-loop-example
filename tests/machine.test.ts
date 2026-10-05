@@ -49,8 +49,12 @@ describe("advanceRun / state machine", () => {
     expect(cps[3].state).toMatchObject({ status: "analyzing", tokens_used: 600 + 80 + 900 + 250, cost_usd: expect.any(Number), step_count: 3, replans: 0, recommendation: null, final_terms: null });
     expect((cps[3].state as { cost_usd: number }).cost_usd).toBeGreaterThan(0);
     const calls = repo.agentCalls.filter((a) => a.run_id === run.id);
-    expect(calls.map((a) => [a.agent, a.purpose, a.status])).toEqual([["lead", "triage", "ok"], ["lead", "plan", "ok"]]);
-    expect(done.tokens_used).toBe(600 + 80 + 900 + 250);
+    expect(calls.map((a) => [a.agent, a.purpose, a.status])).toEqual([
+      ["lead", "triage", "ok"], ["lead", "plan", "ok"],
+      ["market", "analyze", "ok"], ["finance", "analyze", "ok"], ["product", "analyze", "ok"], ["skeptic", "analyze", "ok"],
+      ["lead", "synthesize", "ok"],
+    ]);
+    expect(done.tokens_used).toBe(600 + 80 + 900 + 250 + 4 * (1800 + 450) + 2200 + 500);
     expect(done.cost_usd).toBeGreaterThan(0);
     const steps = repo.auditLog.filter((a) => a.entity_id === run.id && a.action === "run.step");
     expect(steps).toHaveLength(6);
