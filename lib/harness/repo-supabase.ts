@@ -6,7 +6,7 @@ import { NotFoundError } from "./errors";
 import { initialRunState } from "./run-state";
 import type { Repo } from "./repo";
 
-type Row = Record<string, any>;
+type Row = Record<string, unknown>;
 const num = (v: unknown) => Number(v);
 const numOrNull = (v: unknown) => (v === null || v === undefined ? null : Number(v));
 

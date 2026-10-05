@@ -21,4 +21,6 @@ pnpm dev                     # http://localhost:3000
 
 ## Scripts
 
+Checks: `pnpm test` · `pnpm typecheck` · `pnpm lint`
+
 `pnpm dev` · `pnpm build` · `pnpm test` · `pnpm db:reset`

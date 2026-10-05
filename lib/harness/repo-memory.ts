@@ -72,7 +72,7 @@ export class MemoryRepo implements Repo {
   }
   async getConfig(version: number) {
     const c = this.configs.find((x) => x.version === version);
-    if (!c) throw new Error(`harness_configs: version ${version} not found`);
+    if (!c) throw new NotFoundError("harness_configs", `version=${version}`);
     return clone(c);
   }
   async getActiveConfig() {
@@ -114,7 +114,7 @@ export class MemoryRepo implements Repo {
   async getRun(id: string) {
     await Promise.resolve(); // yield so concurrent callers interleave
     const r = this._runs.find((x) => x.id === id);
-    if (!r) throw new Error(`runs: not found (${id})`);
+    if (!r) throw new NotFoundError("runs", id);
     return clone(r);
   }
   async updateRun(id: string, patch: Partial<Run>, expectStep?: number) {
@@ -134,7 +134,7 @@ export class MemoryRepo implements Repo {
     const rows = this._checkpoints.filter((x) => x.run_id === runId && !filter?.excludeNodes?.includes(x.node));
     if (!rows.length) return null;
     const top = rows.reduce((a, b) => (b.seq > a.seq ? b : a));
-    return clone({ seq: top.seq, node: top.node, state: top.state as any });
+    return clone({ seq: top.seq, node: top.node, state: top.state });
   }
 
   async addAgentCall(a: Omit<AgentCallRow, "id" | "created_at">) {

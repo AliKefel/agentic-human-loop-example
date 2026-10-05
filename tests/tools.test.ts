@@ -4,7 +4,7 @@ import { pitchFixture } from "./helpers";
 
 describe("tools", () => {
   it("valuation_calculator computes implied valuation and revenue multiple", () => {
-    const r = runTool("valuation_calculator", {}, pitchFixture("brewbot")) as any;
+    const r = runTool("valuation_calculator", {}, pitchFixture("brewbot")) as { implied_valuation: number; revenue_multiple: number | null };
     expect(r.implied_valuation).toBe(1_200_000);
     expect(r.revenue_multiple).toBeCloseTo(2.5);
   });
@@ -22,7 +22,7 @@ describe("tools", () => {
     expect(scanRedFlags(p)).toContainEqual(expect.objectContaining({ code: "inconsistent_financials", severity: "high" }));
   });
   it("portfolio_lookup returns confidential holdings for the sector", () => {
-    const r = runTool("portfolio_lookup", {}, pitchFixture("brewbot")) as any[];
+    const r = runTool("portfolio_lookup", {}, pitchFixture("brewbot")) as unknown[];
     expect(r.length).toBeGreaterThan(0);
   });
 });

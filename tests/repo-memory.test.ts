@@ -125,6 +125,8 @@ describe("MemoryRepo", () => {
     const repo = new MemoryRepo();
     await expect(repo.updateRun("nope", { status: "triage" }, 0)).rejects.toBeInstanceOf(NotFoundError);
     await expect(repo.decideApprovalRow("nope", { status: "approved", decided_by: null, reason: null, final_terms: null, is_override: false })).rejects.toBeInstanceOf(NotFoundError);
+    await expect(repo.getRun("nope")).rejects.toBeInstanceOf(NotFoundError);
+    await expect(repo.getConfig(999)).rejects.toBeInstanceOf(NotFoundError);
   });
 
   it("pendingApprovalForRun returns the newest pending", async () => {

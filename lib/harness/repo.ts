@@ -13,7 +13,7 @@ export interface Repo {
   /** compare-and-set: applies only if expectStep is undefined or run.step_count === expectStep; returns the updated run, or null if the CAS was lost. Unknown id throws NotFoundError (null never means "not found"). There is NO terminal-status guard: callers bump step_count to invalidate in-flight steps. */
   updateRun(id: string, patch: Partial<Run>, expectStep?: number): Promise<Run | null>;
   addCheckpoint(c: { run_id: string; seq: number; node: string; state: unknown; duration_ms: number }): Promise<void>;
-  lastCheckpoint(runId: string, filter?: { excludeNodes?: string[] }): Promise<{ seq: number; node: string; state: any } | null>;
+  lastCheckpoint(runId: string, filter?: { excludeNodes?: string[] }): Promise<{ seq: number; node: string; state: unknown } | null>;
   addAgentCall(a: Omit<AgentCallRow, "id" | "created_at">): Promise<string>;
   addToolCall(t: Omit<ToolCallRow, "id" | "created_at">): Promise<void>;
   addApproval(a: Omit<ApprovalRow, "id" | "created_at" | "status" | "decided_by" | "reason" | "decided_at" | "final_terms" | "is_override">): Promise<ApprovalRow>;
