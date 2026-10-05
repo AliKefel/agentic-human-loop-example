@@ -133,7 +133,8 @@ type SharkOutput = {
 
 - Tools are plain TypeScript functions in `lib/tools/` (provided). Agents request tools; the **harness** executes them.
 - Before every tool call, the harness checks `config.permissions[agent].tools`. A denied call is **not executed**, is recorded in `tool_calls` with `permitted = false`, and writes an audit event `tool.denied`.
-- Data scopes (`config.permissions[agent].data`) control what context is placed in each Shark's prompt. The `portfolio` scope (the fund's confidential holdings) is granted to **no agent** in config v1.
+- Data scopes (`config.permissions[agent].data`) control what context is placed in each Shark's prompt **and** which tools an agent may use: every tool requires a data scope (`market_size_lookup`→market, `valuation_calculator`→financials, `comparable_deals_search`→deals, `red_flag_scanner`→financials, `portfolio_lookup`→portfolio). The `portfolio` scope (the fund's confidential holdings, via the fifth tool `portfolio_lookup`) is granted to **no agent** in config v1 — every Shark can *see* the tool, none may use it.
+- **Deterministic prescan**: during `triage` the harness runs `scanRedFlags(pitch)` itself (no LLM) and stores the result in `run.state.prescan`. Policy rule 1 uses the prescan **and** the Skeptic's flags, so an injection is escalated even if the model is fooled.
 - **Pitch text is untrusted input.** It is always wrapped in `<untrusted_pitch>` tags with an instruction that it is data, not instructions.
 - **No agent can send an offer.** Only the deterministic policy engine (and humans) can move a run to `offer_sent`.
 
@@ -156,7 +157,7 @@ Every attempt is a row in `agent_calls` (attempt number, model, tokens, cost, la
 
 `lib/harness/policy.ts` exports `decide(run, sharkOutputs, draftOffer, config): PolicyDecision`. Rules are evaluated **in this order**; first match wins:
 
-1. **Escalate** if any red flag has `severity: "high"` (includes `prompt_injection`, `inconsistent_financials`). Applies at **every** autonomy level.
+1. **Escalate** if any red flag in the prescan or any Shark output has `severity: "high"` (includes `prompt_injection`, `inconsistent_financials`). Applies at **every** autonomy level.
 2. **Need info** if the Skeptic reports `missing_data` and the run has not already asked the founder.
 3. **Exception** if the run is `degraded`, or score spread (max − min across Sharks) ≥ `config.thresholds.disagreement_spread` (5).
 4. **By autonomy level**:
@@ -237,7 +238,20 @@ All tables live in `supabase/migrations/` (provided). Key columns:
 | `incidents` | id, run_id, severity, title, owner_id, status, handoff (jsonb), sla_due, created_at, resolved_at |
 | `audit_log` | id, actor_id, actor_role, action, entity, entity_id, details (jsonb), created_at |
 
-All database access goes through server code using the Supabase service role key. The browser uses the anon key **only** for Realtime subscriptions on `runs`, `approvals`, `checkpoints`, `agent_calls`, `incidents`.
+`pitches` also has `claimed_revenue` (nullable) — what the founder claims, compared against verified `revenue` by the red-flag scanner.
+
+All database access goes through server code using `SUPABASE_SECRET_KEY`. The browser uses `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` **only** for Realtime subscriptions on `runs`, `approvals`, `checkpoints`, `agent_calls`, `incidents`, `audit_log` (read-only RLS policies — a deliberate demo tradeoff you must document in Harness Spec v2).
+
+### Environment variables (`.env.local`)
+
+| Name | Where | Used by |
+|---|---|---|
+| `NEXT_PUBLIC_SUPABASE_URL` | Supabase → Project Settings → API | server + browser |
+| `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | API Keys → Publishable key | browser (Realtime only) |
+| `SUPABASE_SECRET_KEY` | API Keys → Secret key | server only |
+| `SUPABASE_DB_URL` | Connect → Session pooler URI | `pnpm db:reset` only |
+| `ANTHROPIC_API_KEY` | console.anthropic.com | optional; empty = Mock mode |
+| `NEXT_PUBLIC_MOCK_MODE` | `true` / `false` | force Mock mode |
 
 ---
 
@@ -383,7 +397,7 @@ docs/SPEC.md, docs/HARNESS_SPEC_V2.md, docs/LANGGRAPH_MAPPING.md, docs/mockups/
 
 ### M0 — Setup
 **Goal**: The starter app runs in Mock mode against your database.
-**Build**: `pnpm install`; copy `.env.example` → `.env.local`; start Supabase (`supabase start` locally, or create a hosted project); `supabase db reset` (applies migrations + seed).
+**Build**: `pnpm install`; copy `.env.example` → `.env.local` and fill it in; `pnpm db:reset` (drops and re-applies `supabase/migrations/*` then `supabase/seed.sql` using `SUPABASE_DB_URL`; works for hosted or local Supabase).
 **Done when**
 - [ ] `pnpm dev` shows the shell with sidebar and placeholder pages
 - [ ] Role switcher changes the avatar and persists across reloads
