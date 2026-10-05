@@ -117,6 +117,11 @@ export const FIXTURES: Record<string, PitchFixtureSet> = {
       after_founder: {
         finance: standard("finance", 7, { amount: 100000, equity_pct: 15 }),
         skeptic: standard("skeptic", 7),
+        synthesis: {
+          recommendation: "invest", terms: { amount: 100000, equity_pct: 15 }, tokens: [2400, 520],
+          summary: "After the founder's answer (paid beta, ~$124K ARR run-rate, 62% retention), Sharks scored 7/7/7/7 (market/finance/product/skeptic); recommend investing on the stated terms.",
+          disagreements: [],
+        },
       },
     },
   }),

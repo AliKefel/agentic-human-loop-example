@@ -1,7 +1,7 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { createAdminClient } from "@/lib/supabase/server";
-import type { AgentCallRow, ApprovalQueueRow, ApprovalRow, HarnessConfig, IncidentRow, MemoryRow, Pitch, Run, ToolCallRow, User } from "@/lib/types";
+import type { AgentCallRow, ApprovalQueueRow, ApprovalRow, FounderMessageRow, HarnessConfig, IncidentListRow, IncidentPatch, IncidentRow, MemoryRow, Pitch, Run, ToolCallRow, User } from "@/lib/types";
 import { NotFoundError } from "./errors";
 import { initialRunState } from "./run-state";
 import type { Repo } from "./repo";
@@ -134,6 +134,11 @@ export class SupabaseRepo implements Repo {
     const { error } = await this.db.from("founder_messages").insert(m);
     if (error) this.fail("founder_messages", "insert", error);
   }
+  async listFounderMessages(runId: string) {
+    const { data, error } = await this.db.from("founder_messages").select("*").eq("run_id", runId).order("created_at", { ascending: true }).order("id", { ascending: true });
+    if (error) this.fail("founder_messages", "select", error);
+    return (data ?? []) as FounderMessageRow[];
+  }
   async addMemory(m: { scope: "firm" | "founder" | "partner"; subject: string; sector: string | null; content: string; source_run_id: string | null }) {
     const { error } = await this.db.from("memories").insert(m);
     if (error) this.fail("memories", "insert", error);
@@ -149,6 +154,24 @@ export class SupabaseRepo implements Repo {
 
   async addIncident(i: Omit<IncidentRow, "id" | "created_at" | "resolved_at" | "status">) {
     return toIncident(await this.insert("incidents", i));
+  }
+  async getIncident(id: string) { return toIncident(await this.one("incidents", "id", id)); }
+  async updateIncident(id: string, patch: IncidentPatch, expectStatus?: IncidentRow["status"]) {
+    let q = this.db.from("incidents").update(patch).eq("id", id);
+    if (expectStatus !== undefined) q = q.eq("status", expectStatus);
+    const { data, error } = await q.select().maybeSingle();
+    if (error) this.fail("incidents", "update", error);
+    if (data) return toIncident(data);
+    await this.assertExists("incidents", id);
+    return null;
+  }
+  async listIncidents(filter: { status?: IncidentRow["status"]; run_id?: string } = {}): Promise<IncidentListRow[]> {
+    let b = this.db.from("incidents").select("*, runs!inner(status, pitches!inner(company))");
+    if (filter.status) b = b.eq("status", filter.status);
+    if (filter.run_id) b = b.eq("run_id", filter.run_id);
+    const { data, error } = await b.order("created_at", { ascending: true }).order("id", { ascending: true });
+    if (error) this.fail("incidents", "select", error);
+    return (data ?? []).map(({ runs, ...i }: Row) => ({ ...toIncident(i), company: runs.pitches.company, run_status: runs.status }));
   }
 
   async audit(e: { actor_id: string | null; actor_role: string; action: string; entity: string; entity_id?: string; details?: Record<string, unknown> }) {

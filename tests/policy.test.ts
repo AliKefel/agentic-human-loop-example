@@ -64,6 +64,8 @@ const cases: Case[] = [
   { name: "L3 pass → auto_pass", in: { autonomyLevel: 3, synthesis: pass }, outcome: "auto_pass", rule: "l3.auto_pass" },
   { name: "L3 $2M → auto_send", in: { autonomyLevel: 3, synthesis: invest(2000000, 20) }, outcome: "auto_send", rule: "l3.auto_send" },
   { name: "L3 $500K → auto_send", in: { autonomyLevel: 3, synthesis: invest(500000, 5) }, outcome: "auto_send", rule: "l3.auto_send" },
+  { name: "L3 unclamped $2,000,001 → over_fund_max (GP)", in: { autonomyLevel: 3, synthesis: invest(2000001, 20) }, outcome: "needs_approval", rule: "l3.over_fund_max", role: "general_partner" },
+  { name: "L3 invest without terms → over_fund_max (GP)", in: { autonomyLevel: 3, synthesis: { ...invest(1, 1), terms: null } }, outcome: "needs_approval", rule: "l3.over_fund_max", role: "general_partner" },
 ];
 
 describe("decide (SPEC §2.8)", () => {
@@ -80,7 +82,7 @@ describe("decide (SPEC §2.8)", () => {
     const ids = new Set(cases.map((c) => c.rule));
     for (const id of [
       "escalate.red_flag", "need_info.missing_data", "exception.degraded", "exception.disagreement",
-      "l0.human_decides", "l1.auto_pass", "l1.approval_required", "l2.auto_pass", "l2.auto_send", "l2.over_threshold", "l3.auto_pass", "l3.auto_send",
+      "l0.human_decides", "l1.auto_pass", "l1.approval_required", "l2.auto_pass", "l2.auto_send", "l2.over_threshold", "l3.auto_pass", "l3.auto_send", "l3.over_fund_max",
     ]) expect(ids.has(id), id).toBe(true);
   });
 

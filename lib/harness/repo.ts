@@ -1,5 +1,5 @@
 import "server-only";
-import type { AgentCallRow, ApprovalQueueRow, ApprovalRow, HarnessConfig, IncidentRow, MemoryRow, Pitch, Run, ToolCallRow, User } from "@/lib/types";
+import type { AgentCallRow, ApprovalQueueRow, ApprovalRow, FounderMessageRow, HarnessConfig, IncidentListRow, IncidentPatch, IncidentRow, MemoryRow, Pitch, Run, ToolCallRow, User } from "@/lib/types";
 import { SupabaseRepo } from "./repo-supabase";
 
 export interface Repo {
@@ -31,10 +31,18 @@ export interface Repo {
   /** Approvals joined with run/pitch fields; status "decided" = anything but pending. Oldest first (created_at, then id). */
   listApprovals(filter?: { status?: "pending" | "decided"; kind?: ApprovalRow["kind"] }): Promise<ApprovalQueueRow[]>;
   addFounderMessage(m: { run_id: string; direction: "to_founder" | "from_founder"; body: string; author_id: string | null }): Promise<void>;
+  /** The run's founder thread, oldest first (created_at, then insertion / id). */
+  listFounderMessages(runId: string): Promise<FounderMessageRow[]>;
   addMemory(m: { scope: "firm" | "founder" | "partner"; subject: string; sector: string | null; content: string; source_run_id: string | null }): Promise<void>;
   /** Newest first; ties broken by insertion order (later insert first). subject/sector match case-insensitively. */
   findMemories(q: { scope: "firm" | "founder" | "partner"; subject?: string; sector?: string; limit?: number }): Promise<MemoryRow[]>;
   addIncident(i: Omit<IncidentRow, "id" | "created_at" | "resolved_at" | "status">): Promise<IncidentRow>;
+  /** Unknown id throws NotFoundError. */
+  getIncident(id: string): Promise<IncidentRow>;
+  /** Applies `patch`; if `expectStatus` is given it is a CAS on the current status (null when lost). Unknown id throws NotFoundError. */
+  updateIncident(id: string, patch: IncidentPatch, expectStatus?: IncidentRow["status"]): Promise<IncidentRow | null>;
+  /** Incidents joined with company + run status, oldest first (created_at, then id). */
+  listIncidents(filter?: { status?: IncidentRow["status"]; run_id?: string }): Promise<IncidentListRow[]>;
   audit(e: { actor_id: string | null; actor_role: string; action: string; entity: string; entity_id?: string; details?: Record<string, unknown> }): Promise<void>;
 }
 

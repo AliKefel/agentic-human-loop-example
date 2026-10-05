@@ -71,9 +71,18 @@ function DrawerBody({ item, user, memories, onDone }: { item: QueueItem; user: U
   const [agents, setAgents] = useState<AgentName[]>([]);
   const [pending, start] = useTransition();
 
-  const base = canAct(user, a, terms?.amount ?? 0);
+  // AI pass: Approve confirms the pass (→ passed); Modify offers instead (override); Reject is not offered.
+  const aiPass = a.ai_recommendation === "pass";
+  const base = canAct(user, a, aiPass ? 0 : (terms?.amount ?? 0));
   const modAmount = Number(amount);
+  const modEquity = Number(equity);
   const mod = canAct(user, a, Number.isFinite(modAmount) ? modAmount : 0);
+  const termsInvalid =
+    amount.trim() === "" || !Number.isFinite(modAmount) || modAmount <= 0 || modAmount > item.fundMax
+      ? `Enter an amount above $0 and at most ${money(item.fundMax)}.`
+      : equity.trim() === "" || !Number.isFinite(modEquity) || modEquity <= 0 || modEquity > 100
+        ? "Enter equity above 0% and at most 100%."
+        : undefined;
   const needReason = reason.trim() ? undefined : "A reason is required.";
   const canReplan = a.kind === "exception" && item.replans < item.maxReplans;
 
@@ -139,7 +148,7 @@ function DrawerBody({ item, user, memories, onDone }: { item: QueueItem; user: U
         <Separator />
 
         <section className="space-y-2">
-          <Label htmlFor="reason">Reason {modifying ? "(required to modify)" : "(required to modify or reject)"}</Label>
+          <Label htmlFor="reason">Reason {modifying || aiPass ? "(required to modify)" : "(required to modify or reject)"}</Label>
           <Textarea id="reason" value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Why are you making this call?" />
         </section>
 
@@ -177,9 +186,9 @@ function DrawerBody({ item, user, memories, onDone }: { item: QueueItem; user: U
       <SheetFooter className="flex-row flex-wrap gap-2">
         {modifying ? (
           <>
-            <Guarded why={mod.why ?? needReason}>
-              <Button disabled={pending || !mod.ok || !!needReason} data-testid="confirm-modify"
-                onClick={() => submit({ type: "modify", terms: { amount: modAmount, equity_pct: Number(equity) } }, "modify and approve")}>
+            <Guarded why={termsInvalid ?? mod.why ?? needReason}>
+              <Button disabled={pending || !!termsInvalid || !mod.ok || !!needReason} data-testid="confirm-modify"
+                onClick={() => submit({ type: "modify", terms: { amount: modAmount, equity_pct: modEquity } }, "modify and approve")}>
                 Approve modified terms
               </Button>
             </Guarded>
@@ -194,15 +203,21 @@ function DrawerBody({ item, user, memories, onDone }: { item: QueueItem; user: U
           </>
         ) : (
           <>
-            <Guarded why={base.why ?? (terms ? undefined : "No terms to approve — use Modify.")}>
-              <Button disabled={pending || !base.ok || !terms} onClick={() => submit({ type: "approve" }, "approve")} data-testid="approve">Approve</Button>
+            <Guarded why={base.why ?? (aiPass || terms ? undefined : "No terms to approve — use Modify.")}>
+              <Button disabled={pending || !base.ok || (!aiPass && !terms)} onClick={() => submit({ type: "approve" }, aiPass ? "confirm pass" : "approve")} data-testid="approve">
+                {aiPass ? "Confirm pass" : "Approve"}
+              </Button>
             </Guarded>
             <Guarded why={base.why}>
-              <Button variant="outline" disabled={pending || !base.ok} onClick={() => setModifying(true)} data-testid="modify">Modify</Button>
+              <Button variant="outline" disabled={pending || !base.ok} onClick={() => setModifying(true)} data-testid="modify">
+                {aiPass ? "Modify (offer instead)" : "Modify"}
+              </Button>
             </Guarded>
-            <Guarded why={base.why ?? needReason}>
-              <Button variant="destructive" disabled={pending || !base.ok || !!needReason} onClick={() => submit({ type: "reject" }, "reject")} data-testid="reject">Reject</Button>
-            </Guarded>
+            {!aiPass && (
+              <Guarded why={base.why ?? needReason}>
+                <Button variant="destructive" disabled={pending || !base.ok || !!needReason} onClick={() => submit({ type: "reject" }, "reject")} data-testid="reject">Reject</Button>
+              </Guarded>
+            )}
             {a.kind === "exception" && (
               <Guarded why={base.why ?? (canReplan ? undefined : `Replan limit reached (${item.maxReplans}).`)}>
                 <Button variant="secondary" disabled={pending || !base.ok || !canReplan} onClick={() => setReplanning(true)}>Replan</Button>

@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -9,6 +10,9 @@ import { getActingUser } from "@/lib/current-user";
 import { DecisionPanel } from "@/components/run/decision-panel";
 import { WAITING_FOR_KIND } from "@/lib/harness/approvals";
 import { queueItemFor, toQueueRow } from "@/lib/harness/queue-data";
+import { FounderPanel } from "@/components/run/founder-panel";
+import { SeverityBadge } from "@/components/incidents/severity-badge";
+import { isMockMode } from "@/lib/env";
 import type { Pitch, Run, User } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -19,7 +23,9 @@ export default async function RunPage({ params }: { params: Promise<{ id: string
   const { id } = await params;
   if (!UUID.test(id)) notFound();
   const [{ run, pitch }, user] = await Promise.all([load(id), getActingUser()]);
-  const review = await loadReview(run, pitch, user);
+  const repo = getRepo();
+  const [review, messages, incidents] = await Promise.all([loadReview(run, pitch, user), repo.listFounderMessages(run.id), repo.listIncidents({ run_id: run.id })]);
+  const awaitingFounder = run.status === "awaiting_founder";
   return (
     <Card className="max-w-xl">
       <CardHeader>
@@ -33,6 +39,12 @@ export default async function RunPage({ params }: { params: Promise<{ id: string
         {run.state.triage && <p>Triage: {run.state.triage.fast_pass ? "fast-pass" : "full review"} — {run.state.triage.reason}</p>}
         {run.state.prescan && <p>Prescan flags: {run.state.prescan.length ? run.state.prescan.map((f) => f.code).join(", ") : "none"}</p>}
         {run.plan && <p>Plan: {run.plan.sharks.join(", ")} — {run.plan.rationale}</p>}
+        {incidents.map((i) => (
+          <p key={i.id} className="flex items-center gap-2" data-testid="run-incident">
+            <SeverityBadge severity={i.severity} /> Incident: {i.title} ({i.status}) · <Link href="/incidents" className="text-primary underline-offset-4 hover:underline">View on incidents board</Link>
+          </p>
+        ))}
+        {(awaitingFounder || messages.length > 0) && <FounderPanel runId={run.id} messages={messages} awaiting={awaitingFounder} mock={isMockMode()} />}
         {run.decision && <DecisionPanel decision={run.decision} item={review.item} user={user} memories={review.memories} />}
         {run.final_terms && <p>Final terms: ${run.final_terms.amount.toLocaleString("en-US")} for {run.final_terms.equity_pct}%</p>}
         {run.error && <p className="text-destructive">Error: {run.error}</p>}

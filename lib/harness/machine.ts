@@ -8,6 +8,8 @@ import { buildPlanPrompt, buildTriagePrompt } from "./planner";
 import { runSharks } from "./sharks";
 import { synthesize } from "./synthesis";
 import { decide } from "./policy";
+import { askFounder, founderQuestion } from "./founder";
+import { openEscalationIncident, openFailureIncident } from "./incidents";
 
 export type { StepCtx } from "./agent";
 export type AdvanceResult = { status: "advanced" | "conflict" | "idle"; run: Run };
@@ -98,12 +100,12 @@ const OUTCOME_MAP: Record<PolicyOutcome, { status: RunStatus; kind?: ApprovalRow
   auto_pass: { status: "passed" },
   needs_approval: { status: "awaiting_approval", kind: "approval" },
   exception: { status: "in_review", kind: "exception" },
-  escalate: { status: "escalated", kind: "escalation" }, // incident added in M6
-  need_info: { status: "awaiting_founder" }, // founder message added in M6
+  escalate: { status: "escalated", kind: "escalation" }, // + incident (effects)
+  need_info: { status: "awaiting_founder" }, // + to_founder message (effects)
 };
 
 const policyCheck: Handler = async (ctx) => {
-  const { run, config, repo } = ctx;
+  const { run, config, repo, pitch } = ctx;
   const synthesis = run.state.synthesis;
   if (!synthesis) throw new Error("policy_check without a synthesis");
   const decision = decide({
@@ -112,11 +114,19 @@ const policyCheck: Handler = async (ctx) => {
   });
   const { status, kind } = OUTCOME_MAP[decision.outcome];
   const patch: Partial<Run> = { decision, ...(decision.outcome === "auto_send" ? { final_terms: synthesis.terms } : {}) };
+  // Mark the question as asked in the committed state (not in effects) so the next policy pass never re-asks.
+  if (decision.outcome === "need_info") patch.state = withState(run, { founder_asked: true });
 
   const effects = async (committed: Run) => {
     await repo.audit({ ...SYSTEM, action: "policy.decided", entity: "run", entity_id: run.id, details: { rule: decision.rule, outcome: decision.outcome } });
     if (decision.outcome === "auto_send") {
       await repo.audit({ ...SYSTEM, action: "offer.sent", entity: "run", entity_id: run.id, details: { terms: committed.final_terms, rule: decision.rule } });
+    }
+    if (decision.outcome === "need_info") {
+      // Same guard as approvals: never ask the founder on a run a cancel already moved.
+      if ((await repo.getRun(run.id)).status !== status) return;
+      await askFounder(repo, committed, founderQuestion(run.state.shark_outputs.skeptic?.missing_data ?? []));
+      return;
     }
     if (!kind) return;
     // A cancel may have landed after the CAS: never open an approval on a run that is no longer waiting for it.
@@ -132,6 +142,10 @@ const policyCheck: Handler = async (ctx) => {
       return;
     }
     await repo.audit({ ...SYSTEM, action: "approval.requested", entity: "approval", entity_id: approval.id, details: { kind, required_role, rule: decision.rule } });
+    if (decision.outcome === "escalate") {
+      const flags = [...(run.state.prescan ?? []), ...Object.values(run.state.shark_outputs).flatMap((o) => o?.red_flags ?? [])];
+      await openEscalationIncident(repo, committed, pitch, flags);
+    }
   };
   return { status, patch, effects };
 };
@@ -184,8 +198,14 @@ const lost = async (repo: Repo, runId: string, usage: Usage): Promise<AdvanceRes
 async function failRun(repo: Repo, run: Run, error: string, usage: Usage = NO_USAGE): Promise<AdvanceResult> {
   const totals = { tokens_used: run.tokens_used + usage.tokens, cost_usd: +(run.cost_usd + usage.cost).toFixed(6) };
   const updated = await repo.updateRun(run.id, { ...totals, status: "failed", error, step_count: run.step_count + 1, completed_at: new Date().toISOString() }, run.step_count);
-  if (!updated) return lost(repo, run.id, usage);
+  if (!updated) return lost(repo, run.id, usage); // lost CAS → no incident: someone else moved the run
   await repo.audit({ ...SYSTEM, action: "run.failed", entity: "run", entity_id: run.id, details: { from: run.status, error } });
+  try {
+    await openFailureIncident(repo, updated, await repo.getPitch(run.pitch_id), run.status);
+  } catch (e) {
+    // The failure is already committed; never let incident creation mask it.
+    console.error(`run ${run.id}: could not open failure incident`, e);
+  }
   return { status: "advanced", run: updated };
 }
 
@@ -195,7 +215,6 @@ export async function advanceRun(repo: Repo, runId: string): Promise<AdvanceResu
 
   const config = await repo.getConfig(run.config_version);
   if (run.step_count >= config.budgets.max_steps) {
-    // Incident creation is added in M6.
     return failRun(repo, run, "max_steps_exceeded");
   }
 

@@ -35,6 +35,11 @@ export type ApprovalRow = { id: string; run_id: string; kind: "approval" | "exce
 export type ApprovalQueueRow = ApprovalRow & { company: string; sector: string; autonomy_level: 0 | 1 | 2 | 3; run_status: RunStatus };
 export type MemoryRow = { id: string; scope: "firm" | "founder" | "partner"; subject: string; sector: string | null; content: string; source_run_id: string | null; created_at: string };
 export type IncidentRow = { id: string; run_id: string; severity: "sev1" | "sev2" | "sev3"; title: string; owner_id: string | null; status: "open" | "acknowledged" | "resolved"; handoff: Record<string, unknown>; sla_due: string; created_at: string; resolved_at: string | null };
+/** An incident joined with the run/pitch fields the incidents board needs. */
+export type IncidentListRow = IncidentRow & { company: string; run_status: RunStatus };
+/** Structured handoff note stored in incidents.handoff (SPEC §2.12). */
+export type IncidentHandoff = { what_happened: string; impact: string; current_state: string; next_action: string };
+export type IncidentPatch = Partial<Pick<IncidentRow, "owner_id" | "status" | "handoff" | "resolved_at">>;
 export type FounderMessageRow = { id: string; run_id: string; direction: "to_founder" | "from_founder"; body: string; author_id: string | null; created_at: string };
 export type CheckpointRow = { id: string; run_id: string; seq: number; node: string; state: unknown; duration_ms: number; created_at: string };
 export type AuditRow = { id: number; actor_id: string | null; actor_role: string; action: string; entity: string; entity_id: string | null; details: Record<string, unknown>; created_at: string };

@@ -23,8 +23,18 @@ const STATUS_FOR: Record<ApprovalAction["type"], Exclude<ApprovalRow["status"], 
 
 /**
  * A human decision on a pending approval. Order: conflict check → authority (server-side,
- * audited on deny) → reason → action validation → approval-row CAS → run CAS (+1 step) →
- * checkpoint → audit `approval.<status>`.
+ * audited on deny) → reason → action validation → RUN CAS (+1 step, must still be at the step
+ * we read in the matching waiting status) → approval-row CAS → checkpoint → audit.
+ *
+ * Why the run CAS goes first: it serializes deciders (and cancels, which also bump step_count).
+ * If it loses, nothing has been written and the caller gets a ConflictError. Once it wins, the
+ * decision is committed; the approval CAS should then always succeed. If it does not (an
+ * out-of-band write), we roll forward — the run keeps its new status — and audit
+ * `approval.decide_inconsistent` instead of `approval.<status>`.
+ *
+ * AI "pass" approvals (L0 pass, or an escalation/exception the AI would pass): Approve confirms
+ * the pass (→ passed, not an override); Modify overrides with terms (→ offer_sent, override);
+ * Reject is not offered (ValidationError) since there is no offer to reject.
  */
 export async function decideApproval(repo: Repo, approvalId: string, user: User, action: ApprovalAction, reason: string | null): Promise<Run> {
   const approval = await repo.getApproval(approvalId); // NotFoundError
@@ -50,8 +60,13 @@ export async function decideApproval(repo: Repo, approvalId: string, user: User,
   const config = await repo.getConfig(run.config_version);
   let runPatch: Partial<Run>;
   let finalTerms: Terms | null = null;
+  const aiPass = approval.ai_recommendation === "pass";
   switch (action.type) {
     case "approve":
+      if (aiPass) {
+        runPatch = { status: "passed", final_terms: null }; // confirm the AI's pass
+        break;
+      }
       if (!approval.original_terms) throw new ValidationError("There are no terms to approve; use Modify to set terms");
       finalTerms = approval.original_terms;
       runPatch = { status: "offer_sent", final_terms: finalTerms };
@@ -65,6 +80,7 @@ export async function decideApproval(repo: Repo, approvalId: string, user: User,
       break;
     }
     case "reject":
+      if (aiPass) throw new ValidationError("The AI already recommends pass: Approve confirms the pass, Modify sends an offer instead");
       runPatch = { status: "passed", final_terms: null };
       break;
     case "replan": {
@@ -78,22 +94,27 @@ export async function decideApproval(repo: Repo, approvalId: string, user: User,
   }
 
   const ai = approval.ai_recommendation;
-  const is_override = action.type === "modify" || (action.type === "reject" && ai === "invest") || (action.type === "approve" && ai === "pass");
+  // Override = the human's decision differs from the AI: modified terms, or rejected an AI invest.
+  // (Approving an AI pass confirms it; offering on an AI pass goes through Modify, an override.)
+  const is_override = action.type === "modify" || (action.type === "reject" && ai === "invest");
   const status = STATUS_FOR[action.type];
 
-  const decided = await repo.decideApprovalRow(approval.id, { status, decided_by: user.id, reason: why, final_terms: finalTerms, is_override });
-  if (!decided) throw new ConflictError("This approval was already decided");
-
   const terminal = runPatch.status === "offer_sent" || runPatch.status === "passed";
-  // A cancel is the only thing that bumps step_count while a run waits; losing the CAS means it landed.
+  // Run CAS first: another decider, a founder answer or a cancel all bump step_count, so losing means nothing is written.
   const updated = await repo.updateRun(run.id, { ...runPatch, step_count: run.step_count + 1, completed_at: terminal ? new Date().toISOString() : null }, run.step_count);
-  if (!updated) throw new ConflictError("The run changed while deciding (was it cancelled?)");
+  if (!updated) throw new ConflictError("The run changed while deciding (already decided or cancelled?)");
 
+  const decided = await repo.decideApprovalRow(approval.id, { status, decided_by: user.id, reason: why, final_terms: finalTerms, is_override });
   await repo.addCheckpoint({ run_id: run.id, seq: run.step_count + 1, node: `human.${status}`, state: checkpointSnapshot(updated), duration_ms: 0 });
-  await repo.audit({
-    ...actor(user), action: `approval.${status}`, entity: "approval", entity_id: approval.id,
-    details: { run_id: run.id, kind: approval.kind, rule: approval.rule_fired, is_override, reason: why, final_terms: finalTerms, ...(action.type === "replan" ? { agents: runPatch.state?.rerun } : {}) },
-  });
+  if (!decided) {
+    console.error(`approval ${approval.id}: run ${run.id} moved to ${updated.status} but the approval row was no longer pending`);
+    await repo.audit({ ...actor(user), action: "approval.decide_inconsistent", entity: "approval", entity_id: approval.id, details: { run_id: run.id, attempted: status, run_status: updated.status } });
+  } else {
+    await repo.audit({
+      ...actor(user), action: `approval.${status}`, entity: "approval", entity_id: approval.id,
+      details: { run_id: run.id, kind: approval.kind, rule: approval.rule_fired, is_override, reason: why, final_terms: finalTerms, ...(action.type === "replan" ? { agents: runPatch.state?.rerun } : {}) },
+    });
+  }
   if (runPatch.status === "offer_sent") await repo.audit({ ...actor(user), action: "offer.sent", entity: "run", entity_id: run.id, details: { terms: finalTerms, approval_id: approval.id } });
   return updated;
 }

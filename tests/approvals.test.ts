@@ -126,15 +126,27 @@ describe("decideApproval", () => {
     await expect(decideApproval(repo, a.id, GP, { type: "approve" }, null)).rejects.toBeInstanceOf(ConflictError);
   });
 
-  it("decideApprovalRow CAS loss → ConflictError and the run is not moved", async () => {
+  it("run CAS first: a lost run CAS → ConflictError and the approval stays pending (nothing written)", async () => {
     const repo = new MemoryRepo();
     const run = await toRest(repo, "ledgerleaf");
     const a = approvalOf(repo, run);
-    const orig = repo.decideApprovalRow.bind(repo);
-    repo.decideApprovalRow = async () => null;
+    const orig = repo.updateRun.bind(repo);
+    repo.updateRun = async () => null;
     await expect(decideApproval(repo, a.id, PARTNER, { type: "approve" }, null)).rejects.toBeInstanceOf(ConflictError);
-    repo.decideApprovalRow = orig;
+    repo.updateRun = orig;
     expect((await repo.getRun(run.id)).status).toBe("awaiting_approval");
+    expect((await repo.getApproval(a.id)).status).toBe("pending");
+    expect(repo.auditLog.some((x) => x.action === "approval.approved")).toBe(false);
+  });
+
+  it("approval CAS null after the run CAS won → rolls forward, audits approval.decide_inconsistent", async () => {
+    const repo = new MemoryRepo();
+    const run = await toRest(repo, "ledgerleaf");
+    const a = approvalOf(repo, run);
+    repo.decideApprovalRow = async () => null;
+    const done = await decideApproval(repo, a.id, PARTNER, { type: "approve" }, null);
+    expect(done.status).toBe("offer_sent");
+    expect(repo.auditLog.find((x) => x.action === "approval.decide_inconsistent")).toMatchObject({ entity: "approval", entity_id: a.id });
   });
 
   it("reject / modify require a reason", async () => {
@@ -171,15 +183,29 @@ describe("decideApproval", () => {
     expect(await repo.getApproval(a.id)).toMatchObject({ status: "modified", is_override: true, final_terms: { amount: 180000, equity_pct: 9 } });
   });
 
-  it("approving an AI pass is an override (L0)", async () => {
+  it("AI pass (L0): Approve confirms the pass (→ passed, no override); Reject is invalid; Modify sends an offer (override)", async () => {
     const repo = new MemoryRepo();
     const run = await toRest(repo, "brewbot", 0);
     const a = approvalOf(repo, run);
     expect(a).toMatchObject({ rule_fired: "l0.human_decides" });
-    // force the recorded AI recommendation to pass with terms to exercise the override rule
-    (repo.approvals as ApprovalRow[]).find((x) => x.id === a.id)!.ai_recommendation = "pass";
-    await decideApproval(repo, a.id, PARTNER, { type: "approve" }, null);
-    expect((await repo.getApproval(a.id)).is_override).toBe(true);
+    const rows = repo.approvals as ApprovalRow[];
+    const row = rows.find((x) => x.id === a.id)!;
+    row.ai_recommendation = "pass";
+    row.original_terms = null;
+    await expect(decideApproval(repo, a.id, PARTNER, { type: "reject" }, "no")).rejects.toBeInstanceOf(ValidationError);
+    const done = await decideApproval(repo, a.id, PARTNER, { type: "approve" }, null);
+    expect(done).toMatchObject({ status: "passed", final_terms: null });
+    expect(await repo.getApproval(a.id)).toMatchObject({ status: "approved", is_override: false, final_terms: null });
+    expect(repo.auditLog.some((x) => x.action === "offer.sent" && x.entity_id === run.id && x.actor_id)).toBe(false);
+
+    const run2 = await toRest(repo, "kidcode", 0);
+    const b = approvalOf(repo, run2);
+    const row2 = rows.find((x) => x.id === b.id)!;
+    row2.ai_recommendation = "pass";
+    row2.original_terms = null;
+    const mod = await decideApproval(repo, b.id, PARTNER, { type: "modify", terms: { amount: 80000, equity_pct: 15 } }, "I like it");
+    expect(mod).toMatchObject({ status: "offer_sent", final_terms: { amount: 80000, equity_pct: 15 } });
+    expect((await repo.getApproval(b.id)).is_override).toBe(true);
   });
 
   it("run not in the waiting status for the kind → ConflictError; unknown id → NotFoundError", async () => {
@@ -210,5 +236,27 @@ describe("decideApproval", () => {
     await repo.updateRun(run.id, { replans: 2 });
     const a2 = repo.approvals.filter((x) => x.run_id === run.id && x.status === "pending").at(-1)!;
     await expect(decideApproval(repo, a2.id, GP, { type: "replan", agents: ["market"] }, null)).rejects.toBeInstanceOf(ValidationError);
+  });
+
+  it("snackstack replan [skeptic] reruns only the Skeptic (+1 call), back to in_review on the same fixture; 3rd replan → ValidationError", async () => {
+    const repo = new MemoryRepo();
+    const run = await toRest(repo, "snackstack");
+    expect(run).toMatchObject({ status: "in_review", decision: { rule: "exception.disagreement" } });
+    const count = () => {
+      const c: Record<string, number> = {};
+      for (const x of repo.agentCalls.filter((x) => x.run_id === run.id && x.purpose === "analyze")) c[x.agent] = (c[x.agent] ?? 0) + 1;
+      return c;
+    };
+    const before = count();
+    await decideApproval(repo, approvalOf(repo, run).id, PARTNER, { type: "replan", agents: ["skeptic"] }, null);
+    const back = await runToRest(repo, run.id);
+    expect(back).toMatchObject({ status: "in_review", replans: 1, decision: { rule: "exception.disagreement" } });
+    const after = count();
+    expect(after.skeptic).toBe(before.skeptic + 1);
+    for (const a of ["market", "finance", "product"]) expect(after[a]).toBe(before[a]);
+    const pending = () => repo.approvals.filter((x) => x.run_id === run.id && x.status === "pending").at(-1)!;
+    await decideApproval(repo, pending().id, PARTNER, { type: "replan", agents: ["skeptic"] }, null);
+    expect((await runToRest(repo, run.id)).replans).toBe(2);
+    await expect(decideApproval(repo, pending().id, PARTNER, { type: "replan", agents: ["skeptic"] }, null)).rejects.toBeInstanceOf(ValidationError);
   });
 });

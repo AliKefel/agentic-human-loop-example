@@ -169,4 +169,37 @@ describe("MemoryRepo.listApprovals", () => {
     const { NotFoundError: NF } = await import("@/lib/harness/errors");
     await expect(new R().getApproval("nope")).rejects.toBeInstanceOf(NF);
   });
+  it("incidents: get / update (CAS on expected status) / list joined + filtered, oldest first", async () => {
+    const { MemoryRepo: R } = await import("@/lib/harness/repo-memory");
+    const { NotFoundError: NF } = await import("@/lib/harness/errors");
+    const repo = new R();
+    const run = await newRun(repo);
+    const base = { run_id: run.id, title: "t", owner_id: GP, handoff: { what_happened: "w", impact: "i", current_state: "c", next_action: "" }, sla_due: new Date().toISOString() };
+    const i1 = await repo.addIncident({ ...base, severity: "sev1" });
+    const i2 = await repo.addIncident({ ...base, severity: "sev3" });
+    expect(await repo.getIncident(i1.id)).toMatchObject({ id: i1.id, status: "open", severity: "sev1", resolved_at: null });
+    await expect(repo.getIncident("nope")).rejects.toBeInstanceOf(NF);
+    await expect(repo.updateIncident("nope", { status: "acknowledged" })).rejects.toBeInstanceOf(NF);
+    expect(await repo.updateIncident(i1.id, { status: "acknowledged" }, "resolved")).toBeNull();
+    const up = await repo.updateIncident(i1.id, { status: "acknowledged", owner_id: null }, "open");
+    expect(up).toMatchObject({ status: "acknowledged", owner_id: null });
+    const all = await repo.listIncidents();
+    expect(all.map((i) => i.id)).toEqual([i1.id, i2.id]);
+    expect(all[0]).toMatchObject({ company: "BrewBot", run_status: "queued" });
+    expect((await repo.listIncidents({ status: "open" })).map((i) => i.id)).toEqual([i2.id]);
+    expect((await repo.listIncidents({ run_id: "other" }))).toEqual([]);
+    expect((await repo.listIncidents({ run_id: run.id })).length).toBe(2);
+  });
+
+  it("listFounderMessages returns the run's thread oldest first", async () => {
+    const { MemoryRepo: R } = await import("@/lib/harness/repo-memory");
+    const repo = new R();
+    const run = await newRun(repo);
+    const other = await newRun(repo);
+    await repo.addFounderMessage({ run_id: run.id, direction: "to_founder", body: "q", author_id: null });
+    await repo.addFounderMessage({ run_id: other.id, direction: "to_founder", body: "x", author_id: null });
+    await repo.addFounderMessage({ run_id: run.id, direction: "from_founder", body: "a", author_id: GP });
+    const msgs = await repo.listFounderMessages(run.id);
+    expect(msgs.map((m) => [m.direction, m.body])).toEqual([["to_founder", "q"], ["from_founder", "a"]]);
+  });
 });

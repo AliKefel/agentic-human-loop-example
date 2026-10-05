@@ -4,7 +4,7 @@ import { initialRunState } from "./run-state";
 import { SEED_USERS } from "@/lib/mock/seed-users";
 import { CONFIG_V1 } from "@/lib/mock/seed-config";
 import { SEED_PITCHES } from "@/lib/mock/seed-pitches";
-import type { AgentCallRow, ApprovalQueueRow, ApprovalRow, AuditRow, CheckpointRow, FounderMessageRow, HarnessConfig, IncidentRow, MemoryRow, Pitch, Run, ToolCallRow, User } from "@/lib/types";
+import type { AgentCallRow, ApprovalQueueRow, ApprovalRow, AuditRow, CheckpointRow, FounderMessageRow, HarnessConfig, IncidentListRow, IncidentPatch, IncidentRow, MemoryRow, Pitch, Run, ToolCallRow, User } from "@/lib/types";
 import type { Repo } from "./repo";
 
 const SEED_MEMORIES: Omit<MemoryRow, "id" | "created_at" | "source_run_id">[] = [
@@ -100,7 +100,7 @@ export class MemoryRepo implements Repo {
   }
   async getUser(id: string) {
     const u = this.users.find((x) => x.id === id);
-    if (!u) throw new Error(`users: not found (${id})`);
+    if (!u) throw new NotFoundError("users", id);
     return clone(u);
   }
 
@@ -204,6 +204,9 @@ export class MemoryRepo implements Repo {
   async addFounderMessage(m: { run_id: string; direction: "to_founder" | "from_founder"; body: string; author_id: string | null }) {
     this._founderMessages.push({ ...clone(m), id: randomUUID(), created_at: new Date().toISOString() });
   }
+  async listFounderMessages(runId: string) {
+    return this._founderMessages.filter((m) => m.run_id === runId).map(clone); // insertion order = oldest first
+  }
   async addMemory(m: { scope: "firm" | "founder" | "partner"; subject: string; sector: string | null; content: string; source_run_id: string | null }) {
     this._memories.push({ ...clone(m), id: randomUUID(), created_at: new Date().toISOString() });
   }
@@ -222,6 +225,31 @@ export class MemoryRepo implements Repo {
     const row: IncidentRow = { ...clone(i), id: randomUUID(), status: "open", resolved_at: null, created_at: new Date().toISOString() };
     this._incidents.push(row);
     return clone(row);
+  }
+  async getIncident(id: string) {
+    const i = this._incidents.find((x) => x.id === id);
+    if (!i) throw new NotFoundError("incidents", id);
+    return clone(i);
+  }
+  async updateIncident(id: string, patch: IncidentPatch, expectStatus?: IncidentRow["status"]) {
+    // No await between check and write: the CAS is atomic.
+    const i = this._incidents.findIndex((x) => x.id === id);
+    if (i < 0) throw new NotFoundError("incidents", id);
+    if (expectStatus !== undefined && this._incidents[i].status !== expectStatus) return null;
+    this._incidents[i] = { ...this._incidents[i], ...clone(patch), id };
+    return clone(this._incidents[i]);
+  }
+  async listIncidents(filter: { status?: IncidentRow["status"]; run_id?: string } = {}): Promise<IncidentListRow[]> {
+    const out: IncidentListRow[] = [];
+    for (const i of this._incidents) {
+      if (filter.status && i.status !== filter.status) continue;
+      if (filter.run_id && i.run_id !== filter.run_id) continue;
+      const run = this._runs.find((r) => r.id === i.run_id);
+      const pitch = run && this.pitches.find((p) => p.id === run.pitch_id);
+      if (!run || !pitch) continue; // inner join
+      out.push({ ...clone(i), company: pitch.company, run_status: run.status });
+    }
+    return out.sort((x, y) => (x.created_at < y.created_at ? -1 : x.created_at > y.created_at ? 1 : 0));
   }
 
   async audit(e: { actor_id: string | null; actor_role: string; action: string; entity: string; entity_id?: string; details?: Record<string, unknown> }) {
