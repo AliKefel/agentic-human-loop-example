@@ -29,6 +29,13 @@ describe("MCP tool server", () => {
     const r = await c.callTool({ name: "portfolio_lookup", arguments: { pitch_slug: "brewbot", agent: "market" } });
     expect(r.isError).toBe(true);
     expect(text(r)).toContain("PERMISSION DENIED: portfolio_lookup requires portfolio access");
+    expect(text(r)).not.toContain("Brewly");
+  });
+  it("market_size_lookup allowed for market", async () => {
+    const c = await connect();
+    const r = await c.callTool({ name: "market_size_lookup", arguments: { pitch_slug: "brewbot", agent: "market" } });
+    expect(r.isError).toBeFalsy();
+    expect(JSON.parse(text(r)).sector).toBe("Food & Beverage");
   });
   it("unknown slug", async () => {
     const c = await connect();

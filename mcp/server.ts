@@ -6,13 +6,23 @@ const log = (...a: unknown[]) => console.error("[deep-water-tools]", ...a);
 
 async function resolvers(): Promise<TankResolvers> {
   const hasDb = process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.SUPABASE_SECRET_KEY;
-  if (process.env.THE_TANK_USE_DB !== "true" || !hasDb) return seedResolvers();
+  if (process.env.THE_TANK_USE_DB !== "true") return seedResolvers();
+  if (!hasDb) {
+    log("WARNING: THE_TANK_USE_DB=true but NEXT_PUBLIC_SUPABASE_URL / SUPABASE_SECRET_KEY are missing; falling back to seed data");
+    return seedResolvers();
+  }
   // Dynamic import: SupabaseRepo is server-only (run with NODE_OPTIONS=--conditions=react-server).
   const { SupabaseRepo } = await import("@/lib/harness/repo-supabase");
   const repo = new SupabaseRepo();
   log("using Supabase repo");
   return {
-    getPitch: async (slug) => repo.getPitchBySlug(slug).catch(() => null),
+    getPitch: async (slug) => repo.getPitchBySlug(slug).catch((e) => {
+      if (e?.name !== "NotFoundError") {
+        log("pitch lookup failed:", e);
+        throw e;
+      }
+      return null;
+    }),
     getConfig: () => repo.getActiveConfig(),
   };
 }
