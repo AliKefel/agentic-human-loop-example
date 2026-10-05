@@ -1,5 +1,5 @@
 import { PlanSchema, TriageSchema } from "@/lib/schemas";
-import { TERMINAL, WORKING, type ApprovalRow, type PolicyOutcome, type Run, type RunState, type RunStatus } from "@/lib/types";
+import { TERMINAL, WORKING, type ApprovalRow, type PolicyOutcome, type Run, type RunStatus } from "@/lib/types";
 import type { Repo } from "./repo";
 import { SYSTEM } from "./audit";
 import { callAgentJson, type StepCtx } from "./agent";
@@ -8,10 +8,13 @@ import { buildPlanPrompt, buildTriagePrompt } from "./planner";
 import { runSharks } from "./sharks";
 import { synthesize } from "./synthesis";
 import { decide } from "./policy";
+import { checkpointSnapshot, withState } from "./run-state";
+import { memoriesForPlanning, memoriesForSynthesis, mergeMemoryIds, rememberOutcome } from "./memory";
 import { askFounder, founderQuestion } from "./founder";
 import { openEscalationIncident, openFailureIncident } from "./incidents";
 
 export type { StepCtx } from "./agent";
+export { checkpointSnapshot, withState } from "./run-state";
 export type AdvanceResult = { status: "advanced" | "conflict" | "idle"; run: Run };
 /**
  * A handler returns the next status and a patch; it never writes the run itself.
@@ -23,11 +26,6 @@ export type HandlerResult = { status: RunStatus; patch?: Partial<Run>; effects?:
 export type Handler = (ctx: StepCtx) => Promise<HandlerResult>;
 
 const usd = (n: number) => `$${n.toLocaleString("en-US")}`;
-
-/** Shallow-merges `partial` over run.state. Handlers use this instead of hand-spreading state. */
-export function withState(run: Run, partial: Partial<RunState>): RunState {
-  return { ...run.state, ...partial };
-}
 
 // ---------------------------------------------------------------------------
 // Node handlers — one per WORKING status. Each returns the next status and a
@@ -64,10 +62,10 @@ const triage: Handler = async (ctx) => {
 
 const planning: Handler = async (ctx) => {
   const { pitch, config, run } = ctx;
-  // Founder memories are injected here by the memory milestone (founderHistory); none in M2.
-  const prompt = buildPlanPrompt(pitch, config, { prescan: run.state.prescan ?? [], founderHistory: [] });
+  const memories = await memoriesForPlanning(ctx.repo, pitch); // founder history, recorded in state.memories_used
+  const prompt = buildPlanPrompt(pitch, config, { prescan: run.state.prescan ?? [], founderHistory: memories });
   const plan = await callAgentJson(ctx, { agent: "lead", purpose: "plan", ...prompt, schema: PlanSchema }); // PlanSchema requires skeptic
-  return { status: "analyzing", patch: { plan } };
+  return { status: "analyzing", patch: { plan, state: withState(run, { memories_used: mergeMemoryIds(run.state.memories_used, memories) }) } };
 };
 
 const analyzing: Handler = async (ctx) => {
@@ -91,8 +89,9 @@ const analyzing: Handler = async (ctx) => {
 };
 
 const synthesizing: Handler = async (ctx) => {
-  const synthesis = await synthesize(ctx); // terms already clamped to ask / fund max
-  return { status: "policy_check", patch: { state: withState(ctx.run, { synthesis }), recommendation: synthesis.recommendation } };
+  const memories = await memoriesForSynthesis(ctx.repo, ctx.pitch); // firm memories, same sector
+  const synthesis = await synthesize(ctx, memories); // terms already clamped to ask / fund max
+  return { status: "policy_check", patch: { state: withState(ctx.run, { synthesis, memories_used: mergeMemoryIds(ctx.run.state.memories_used, memories) }), recommendation: synthesis.recommendation } };
 };
 /** Run status and approval kind for each policy outcome (SPEC §2.8 / §2.9). */
 const OUTCOME_MAP: Record<PolicyOutcome, { status: RunStatus; kind?: ApprovalRow["kind"] }> = {
@@ -158,15 +157,6 @@ export const HANDLERS: Partial<Record<RunStatus, Handler>> = {
   synthesizing,
   policy_check: policyCheck,
 };
-
-/** Full run snapshot per SPEC §2.3 (values after the step), including budget used. */
-export function checkpointSnapshot(r: Run) {
-  return {
-    status: r.status, state: r.state, plan: r.plan, decision: r.decision, degraded: r.degraded,
-    recommendation: r.recommendation, final_terms: r.final_terms,
-    tokens_used: r.tokens_used, cost_usd: r.cost_usd, step_count: r.step_count, replans: r.replans,
-  };
-}
 
 // ---------------------------------------------------------------------------
 // advanceRun — exactly one transition per call, CAS on step_count.
@@ -265,6 +255,13 @@ export async function advanceRun(repo: Repo, runId: string): Promise<AdvanceResu
       // The step is already committed; record the failure rather than un-committing.
       console.error(`run ${run.id}: effects for ${run.status} failed`, e);
       await repo.audit({ ...SYSTEM, action: "run.effects_failed", entity: "run", entity_id: run.id, details: { node: run.status, error: e instanceof Error ? e.message : String(e) } });
+    }
+  }
+  if (updated.status === "offer_sent" || updated.status === "passed") {
+    try {
+      await rememberOutcome(repo, updated, pitch);
+    } catch (e) {
+      console.error(`run ${run.id}: could not write outcome memory`, e);
     }
   }
   await repo.audit({ ...SYSTEM, action: "run.step", entity: "run", entity_id: run.id, details: { from: run.status, to: updated.status, duration_ms } });

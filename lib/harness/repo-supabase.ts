@@ -1,7 +1,7 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { createAdminClient } from "@/lib/supabase/server";
-import type { AgentCallRow, ApprovalQueueRow, ApprovalRow, FounderMessageRow, HarnessConfig, IncidentListRow, IncidentPatch, IncidentRow, MemoryRow, Pitch, Run, ToolCallRow, User } from "@/lib/types";
+import type { AgentCallRow, ApprovalQueueRow, AuditFilter, AuditRow, ApprovalRow, FounderMessageRow, HarnessConfig, IncidentListRow, IncidentPatch, IncidentRow, MemoryRow, Pitch, Run, ToolCallRow, User } from "@/lib/types";
 import { NotFoundError } from "./errors";
 import { initialRunState } from "./run-state";
 import type { Repo } from "./repo";
@@ -152,6 +152,14 @@ export class SupabaseRepo implements Repo {
     return (data ?? []).map(toMemory);
   }
 
+  async listMemories(scope?: "firm" | "founder" | "partner") {
+    let b = this.db.from("memories").select("*");
+    if (scope) b = b.eq("scope", scope);
+    const { data, error } = await b.order("created_at", { ascending: false }).order("id", { ascending: false });
+    if (error) this.fail("memories", "select", error);
+    return (data ?? []).map(toMemory);
+  }
+
   async addIncident(i: Omit<IncidentRow, "id" | "created_at" | "resolved_at" | "status">) {
     return toIncident(await this.insert("incidents", i));
   }
@@ -172,6 +180,19 @@ export class SupabaseRepo implements Repo {
     const { data, error } = await b.order("created_at", { ascending: true }).order("id", { ascending: true });
     if (error) this.fail("incidents", "select", error);
     return (data ?? []).map(({ runs, ...i }: Row) => ({ ...toIncident(i), company: runs.pitches.company, run_status: runs.status }));
+  }
+
+  async listAudit(f: AuditFilter) {
+    let b = this.db.from("audit_log").select("*");
+    if (f.actorId !== undefined) b = b.eq("actor_id", f.actorId);
+    if (f.role !== undefined) b = b.eq("actor_role", f.role);
+    if (f.actionContains) b = b.ilike("action", `%${escapeLike(f.actionContains)}%`);
+    if (f.entityId !== undefined) b = b.eq("entity_id", f.entityId);
+    if (f.from) b = b.gte("created_at", f.from);
+    if (f.to) b = b.lt("created_at", f.to);
+    const { data, error } = await b.order("created_at", { ascending: false }).order("id", { ascending: false }).range(f.offset, f.offset + f.limit - 1);
+    if (error) this.fail("audit_log", "select", error);
+    return (data ?? []) as AuditRow[];
   }
 
   async audit(e: { actor_id: string | null; actor_role: string; action: string; entity: string; entity_id?: string; details?: Record<string, unknown> }) {

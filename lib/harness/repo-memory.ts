@@ -4,7 +4,7 @@ import { initialRunState } from "./run-state";
 import { SEED_USERS } from "@/lib/mock/seed-users";
 import { CONFIG_V1 } from "@/lib/mock/seed-config";
 import { SEED_PITCHES } from "@/lib/mock/seed-pitches";
-import type { AgentCallRow, ApprovalQueueRow, ApprovalRow, AuditRow, CheckpointRow, FounderMessageRow, HarnessConfig, IncidentListRow, IncidentPatch, IncidentRow, MemoryRow, Pitch, Run, ToolCallRow, User } from "@/lib/types";
+import type { AgentCallRow, ApprovalQueueRow, ApprovalRow, AuditFilter, AuditRow, CheckpointRow, FounderMessageRow, HarnessConfig, IncidentListRow, IncidentPatch, IncidentRow, MemoryRow, Pitch, Run, ToolCallRow, User } from "@/lib/types";
 import type { Repo } from "./repo";
 
 const SEED_MEMORIES: Omit<MemoryRow, "id" | "created_at" | "source_run_id">[] = [
@@ -221,6 +221,14 @@ export class MemoryRepo implements Repo {
       .map(clone);
   }
 
+  async listMemories(scope?: "firm" | "founder" | "partner") {
+    return this._memories
+      .map((m, idx) => ({ m, idx }))
+      .filter((x) => scope === undefined || x.m.scope === scope)
+      .sort((a, b) => (a.m.created_at < b.m.created_at ? 1 : a.m.created_at > b.m.created_at ? -1 : b.idx - a.idx))
+      .map((x) => clone(x.m));
+  }
+
   async addIncident(i: Omit<IncidentRow, "id" | "created_at" | "resolved_at" | "status">) {
     const row: IncidentRow = { ...clone(i), id: randomUUID(), status: "open", resolved_at: null, created_at: new Date().toISOString() };
     this._incidents.push(row);
@@ -250,6 +258,22 @@ export class MemoryRepo implements Repo {
       out.push({ ...clone(i), company: pitch.company, run_status: run.status });
     }
     return out.sort((x, y) => (x.created_at < y.created_at ? -1 : x.created_at > y.created_at ? 1 : 0));
+  }
+
+  async listAudit(f: AuditFilter) {
+    const needle = f.actionContains ? lc(f.actionContains) : null;
+    const from = f.from ? new Date(f.from).getTime() : null;
+    const to = f.to ? new Date(f.to).getTime() : null;
+    return this._auditLog
+      .filter((r) => {
+        const t = new Date(r.created_at).getTime();
+        return (f.actorId === undefined || r.actor_id === f.actorId) && (f.role === undefined || r.actor_role === f.role) &&
+          (needle === null || lc(r.action).includes(needle)) && (f.entityId === undefined || r.entity_id === f.entityId) &&
+          (from === null || t >= from) && (to === null || t < to);
+      })
+      .sort((a, b) => b.id - a.id) // id is monotonic with insertion, so this is newest first
+      .slice(f.offset, f.offset + f.limit)
+      .map(clone);
   }
 
   async audit(e: { actor_id: string | null; actor_role: string; action: string; entity: string; entity_id?: string; details?: Record<string, unknown> }) {

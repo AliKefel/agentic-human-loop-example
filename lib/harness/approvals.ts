@@ -3,7 +3,8 @@ import type { Repo } from "./repo";
 import { actor } from "./audit";
 import { canAct } from "./authority";
 import { ConflictError, ForbiddenError, ValidationError } from "./errors";
-import { checkpointSnapshot } from "./machine";
+import { rememberOutcome, rememberOverride } from "./memory";
+import { checkpointSnapshot } from "./run-state";
 
 export { canAct } from "./authority";
 
@@ -29,8 +30,10 @@ const STATUS_FOR: Record<ApprovalAction["type"], Exclude<ApprovalRow["status"], 
  * Why the run CAS goes first: it serializes deciders (and cancels, which also bump step_count).
  * If it loses, nothing has been written and the caller gets a ConflictError. Once it wins, the
  * decision is committed; the approval CAS should then always succeed. If it does not (an
- * out-of-band write), we roll forward — the run keeps its new status — and audit
- * `approval.decide_inconsistent` instead of `approval.<status>`.
+ * out-of-band write), we audit `approval.decide_inconsistent` instead of `approval.<status>`.
+ * A TERMINAL outcome rolls forward (the run is already offer_sent/passed); a non-terminal one
+ * (replan) cannot, so the caller gets a ConflictError even though the run has moved.
+ * After a decision wins, memory is written: a firm memory on an override, a founder memory on a terminal outcome.
  *
  * AI "pass" approvals (L0 pass, or an escalation/exception the AI would pass): Approve confirms
  * the pass (→ passed, not an override); Modify overrides with terms (→ offer_sent, override);
@@ -115,6 +118,17 @@ export async function decideApproval(repo: Repo, approvalId: string, user: User,
       details: { run_id: run.id, kind: approval.kind, rule: approval.rule_fired, is_override, reason: why, final_terms: finalTerms, ...(action.type === "replan" ? { agents: runPatch.state?.rerun } : {}) },
     });
   }
+  if (!decided && !terminal) throw new ConflictError("run changed during decision");
   if (runPatch.status === "offer_sent") await repo.audit({ ...actor(user), action: "offer.sent", entity: "run", entity_id: run.id, details: { terms: finalTerms, approval_id: approval.id } });
+  // The decision is committed: memory writes must never fail it.
+  try {
+    const pitch = await repo.getPitch(run.pitch_id);
+    if (decided && is_override && why) {
+      await rememberOverride(repo, updated, pitch, user, { rec: ai, terms: approval.original_terms }, { status: updated.status, terms: finalTerms }, why);
+    }
+    if (terminal) await rememberOutcome(repo, updated, pitch);
+  } catch (e) {
+    console.error(`run ${run.id}: could not write decision memory`, e);
+  }
   return updated;
 }

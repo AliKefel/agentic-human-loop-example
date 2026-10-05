@@ -2,7 +2,7 @@ import type { Run, User } from "@/lib/types";
 import type { Repo } from "./repo";
 import { SYSTEM, actor } from "./audit";
 import { ConflictError, ValidationError } from "./errors";
-import { checkpointSnapshot, withState } from "./machine";
+import { checkpointSnapshot, withState } from "./run-state";
 
 /**
  * Founder Q&A (SPEC §2.10). need_info → awaiting_founder with a to_founder message; a human

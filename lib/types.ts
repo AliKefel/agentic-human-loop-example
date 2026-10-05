@@ -42,6 +42,8 @@ export type IncidentHandoff = { what_happened: string; impact: string; current_s
 export type IncidentPatch = Partial<Pick<IncidentRow, "owner_id" | "status" | "handoff" | "resolved_at">>;
 export type FounderMessageRow = { id: string; run_id: string; direction: "to_founder" | "from_founder"; body: string; author_id: string | null; created_at: string };
 export type CheckpointRow = { id: string; run_id: string; seq: number; node: string; state: unknown; duration_ms: number; created_at: string };
+/** Audit listing filter. `from` is inclusive and `to` exclusive (ISO timestamps); actionContains is a case-insensitive substring. */
+export type AuditFilter = { actorId?: string; role?: string; actionContains?: string; from?: string; to?: string; entityId?: string; limit: number; offset: number };
 export type AuditRow = { id: number; actor_id: string | null; actor_role: string; action: string; entity: string; entity_id: string | null; details: Record<string, unknown>; created_at: string };
 /** Serializable review-queue item: the approval plus what the drawer shows (SPEC §5.4). */
 export type QueueItem = {

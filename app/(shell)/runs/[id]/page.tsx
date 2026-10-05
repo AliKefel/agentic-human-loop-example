@@ -12,6 +12,7 @@ import { WAITING_FOR_KIND } from "@/lib/harness/approvals";
 import { queueItemFor, toQueueRow } from "@/lib/harness/queue-data";
 import { FounderPanel } from "@/components/run/founder-panel";
 import { SeverityBadge } from "@/components/incidents/severity-badge";
+import { loadMemoriesUsed } from "@/lib/harness/memory";
 import { isMockMode } from "@/lib/env";
 import type { Pitch, Run, User } from "@/lib/types";
 
@@ -24,7 +25,7 @@ export default async function RunPage({ params }: { params: Promise<{ id: string
   if (!UUID.test(id)) notFound();
   const [{ run, pitch }, user] = await Promise.all([load(id), getActingUser()]);
   const repo = getRepo();
-  const [review, messages, incidents] = await Promise.all([loadReview(run, pitch, user), repo.listFounderMessages(run.id), repo.listIncidents({ run_id: run.id })]);
+  const [review, messages, incidents, memoriesUsed] = await Promise.all([loadReview(run, pitch, user), repo.listFounderMessages(run.id), repo.listIncidents({ run_id: run.id }), loadMemoriesUsed(repo, run)]);
   const awaitingFounder = run.status === "awaiting_founder";
   return (
     <Card className="max-w-xl">
@@ -47,6 +48,14 @@ export default async function RunPage({ params }: { params: Promise<{ id: string
         {(awaitingFounder || messages.length > 0) && <FounderPanel runId={run.id} messages={messages} awaiting={awaitingFounder} mock={isMockMode()} />}
         {run.decision && <DecisionPanel decision={run.decision} item={review.item} user={user} memories={review.memories} />}
         {run.final_terms && <p>Final terms: ${run.final_terms.amount.toLocaleString("en-US")} for {run.final_terms.equity_pct}%</p>}
+        {memoriesUsed.length > 0 && (
+          <div data-testid="memory-used">
+            <p className="font-medium">Memory used</p>
+            <ul className="list-disc space-y-1 pl-5 text-muted-foreground">
+              {memoriesUsed.map((m) => <li key={m.id}><span className="text-foreground">{m.subject}</span> ({m.scope}) — {m.content}</li>)}
+            </ul>
+          </div>
+        )}
         {run.error && <p className="text-destructive">Error: {run.error}</p>}
       </CardContent>
     </Card>

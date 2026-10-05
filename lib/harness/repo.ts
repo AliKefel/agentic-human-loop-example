@@ -1,5 +1,5 @@
 import "server-only";
-import type { AgentCallRow, ApprovalQueueRow, ApprovalRow, FounderMessageRow, HarnessConfig, IncidentListRow, IncidentPatch, IncidentRow, MemoryRow, Pitch, Run, ToolCallRow, User } from "@/lib/types";
+import type { AgentCallRow, ApprovalQueueRow, AuditFilter, AuditRow, ApprovalRow, FounderMessageRow, HarnessConfig, IncidentListRow, IncidentPatch, IncidentRow, MemoryRow, Pitch, Run, ToolCallRow, User } from "@/lib/types";
 import { SupabaseRepo } from "./repo-supabase";
 
 export interface Repo {
@@ -36,6 +36,8 @@ export interface Repo {
   addMemory(m: { scope: "firm" | "founder" | "partner"; subject: string; sector: string | null; content: string; source_run_id: string | null }): Promise<void>;
   /** Newest first; ties broken by insertion order (later insert first). subject/sector match case-insensitively. */
   findMemories(q: { scope: "firm" | "founder" | "partner"; subject?: string; sector?: string; limit?: number }): Promise<MemoryRow[]>;
+  /** All memories (optionally one scope), newest first; ties by insertion order (later first). */
+  listMemories(scope?: "firm" | "founder" | "partner"): Promise<MemoryRow[]>;
   addIncident(i: Omit<IncidentRow, "id" | "created_at" | "resolved_at" | "status">): Promise<IncidentRow>;
   /** Unknown id throws NotFoundError. */
   getIncident(id: string): Promise<IncidentRow>;
@@ -43,6 +45,8 @@ export interface Repo {
   updateIncident(id: string, patch: IncidentPatch, expectStatus?: IncidentRow["status"]): Promise<IncidentRow | null>;
   /** Incidents joined with company + run status, oldest first (created_at, then id). */
   listIncidents(filter?: { status?: IncidentRow["status"]; run_id?: string }): Promise<IncidentListRow[]>;
+  /** Newest first (created_at, then id). Filters are ANDed; see AuditFilter for from/to semantics. */
+  listAudit(filter: AuditFilter): Promise<AuditRow[]>;
   audit(e: { actor_id: string | null; actor_role: string; action: string; entity: string; entity_id?: string; details?: Record<string, unknown> }): Promise<void>;
 }
 

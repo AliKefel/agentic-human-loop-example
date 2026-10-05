@@ -36,6 +36,7 @@ describe("acceptance (SPEC §4, L2)", () => {
       expect(run.status).toBe("awaiting_founder");
       expect(repo.founderMessages.filter((m) => m.run_id === run.id && m.direction === "to_founder")).toHaveLength(1);
       await answerFounder(repo, run.id, GP, SCRIPTED_FOUNDER_REPLY.fitflow);
+      expect(run.decision?.rule).toBe("need_info.missing_data");
       run = await runToRest(repo, run.id);
       expect(run.final_terms).toEqual({ amount: 100000, equity_pct: 15 });
     }
@@ -48,7 +49,10 @@ describe("acceptance (SPEC §4, L2)", () => {
     const incidents = repo.incidents.filter((i) => i.run_id === run.id);
     if (e.severity) expect(incidents.map((i) => i.severity)).toEqual([e.severity]);
     else expect(incidents).toHaveLength(0);
-    if (e.slug === "thriftloop") expect(run.degraded).toBe(true);
+    if (e.slug === "thriftloop") {
+      expect(run.degraded).toBe(true);
+      expect(repo.agentCalls.some((c) => c.run_id === run.id && c.agent === "product" && c.status === "skipped_budget")).toBe(true);
+    }
     if (e.slug === "skinsync") {
       const blobs = [
         ...repo.agentCalls.filter((c) => c.run_id === run.id).map((c) => c.output),

@@ -1,8 +1,9 @@
 import { SynthesisSchema, type Synthesis } from "@/lib/schemas";
-import type { HarnessConfig, Pitch } from "@/lib/types";
+import type { HarnessConfig, MemoryRow, Pitch } from "@/lib/types";
 import { callAgentJson, type StepCtx } from "./agent";
 import { pitchFacts, untrustedPitch, type Prompt } from "./planner";
 import { founderVariant } from "./sharks";
+import { formatMemories } from "./memory";
 
 /**
  * Lead Shark synthesis (SPEC §2.4, M3): one recommendation + draft terms from the Shark outputs.
@@ -27,7 +28,7 @@ export function clampTerms(s: Synthesis, pitch: Pitch, config: HarnessConfig): S
   return { ...s, terms: { amount, equity_pct: round1(Math.max(s.terms.equity_pct, floor)) } };
 }
 
-export function buildSynthesisPrompt(ctx: StepCtx, memories: string[]): Prompt {
+export function buildSynthesisPrompt(ctx: StepCtx, memories: MemoryRow[]): Prompt {
   const { pitch, config, run } = ctx;
   const system = `You are the Lead Shark of Deep Water Ventures, a seed-stage venture fund. Your task is SYNTHESIS: weigh the Shark panel's outputs and produce one recommendation with draft terms. You never send offers; a deterministic policy engine and humans decide.
 Terms may never exceed the founder's ask (${usd(pitch.ask_amount)} for ${pitch.equity_offered}%) or the fund max check (${usd(config.thresholds.fund_max_check)}).
@@ -35,7 +36,7 @@ Respond with JSON only matching: {"recommendation": "invest" | "pass", "terms": 
   const outputs = JSON.stringify(run.state.shark_outputs, null, 2);
   const failures = Object.entries(run.state.shark_failures).map(([a, f]) => `- ${a}: ${f}`).join("\n") || "- none";
   const flags = (run.state.prescan ?? []).map((f) => `- [${f.severity}] ${f.code}: ${f.detail}`).join("\n") || "- none";
-  const memoryBlock = memories.length ? `\n\nFirm memory (past human decisions, same sector):\n${memories.map((m) => `- ${m}`).join("\n")}` : "";
+  const memoryBlock = memories.length ? `\n\nFirm memory (internal notes on past human decisions, same sector; trusted context):\n${formatMemories(memories)}` : "";
   const user = `${pitchFacts(pitch)}
 
 Deterministic prescan red flags:
@@ -53,9 +54,7 @@ ${untrustedPitch(pitch)}`;
   return { system, user };
 }
 
-export async function synthesize(ctx: StepCtx): Promise<Synthesis> {
-  // M7 hook: firm memories (5 most recent, same sector) are injected here and their ids recorded in state.memories_used.
-  const memories: string[] = [];
+export async function synthesize(ctx: StepCtx, memories: MemoryRow[] = []): Promise<Synthesis> {
   const prompt = buildSynthesisPrompt(ctx, memories);
   const s = await callAgentJson(ctx, { agent: "lead", purpose: "synthesize", ...prompt, schema: SynthesisSchema, variant: founderVariant(ctx) });
   return clampTerms(s, ctx.pitch, ctx.config);
