@@ -100,18 +100,18 @@ describe("M3 parallel sharks", () => {
     expect(clampTerms({ ...injected, recommendation: "pass" }, pitch, CONFIG_V1).terms).toBeNull();
   });
 
-  it("dronedrop in M3: product schema_fail recorded and product marked failed", async () => {
+  it("dronedrop: product schema_fail on attempt 1, retry succeeds (M4)", async () => {
     const { repo, run } = await runPitch("dronedrop");
     const product = repo.agentCalls.filter((a) => a.run_id === run.id && a.agent === "product");
-    expect(product).toHaveLength(1); // no retries until M4
-    expect(product[0]).toMatchObject({ status: "schema_fail", attempt: 1, purpose: "analyze" });
+    expect(product).toHaveLength(2);
+    expect(product[0]).toMatchObject({ status: "schema_fail", attempt: 1, purpose: "analyze", fallback_used: false });
     expect(product[0].input_tokens).toBeGreaterThan(0);
-    expect(run.state.shark_failures).toEqual({ product: "failed" });
-    expect(run.state.shark_outputs.product).toBeUndefined();
-    expect(Object.keys(run.state.shark_outputs).sort()).toEqual(["finance", "market", "skeptic"]);
-    expect(run.degraded).toBe(true);
-    // the product's tool call (before the malformed final turn) is still recorded
-    expect(repo.toolCalls.some((t) => t.run_id === run.id && t.agent === "product" && t.tool === "comparable_deals_search")).toBe(true);
+    expect(product[1]).toMatchObject({ status: "ok", attempt: 2, purpose: "analyze", fallback_used: false });
+    expect(run.state.shark_failures).toEqual({});
+    expect(Object.keys(run.state.shark_outputs).sort()).toEqual([...SHARKS].sort());
+    expect(run.degraded).toBe(false);
+    // the product's tool calls (before the malformed final turn, and on the retry) are recorded
+    expect(repo.toolCalls.filter((t) => t.run_id === run.id && t.agent === "product" && t.tool === "comparable_deals_search")).toHaveLength(2);
   });
 
   it("analyzing with rerun replaces only those agents and clears rerun", async () => {
@@ -120,7 +120,7 @@ describe("M3 parallel sharks", () => {
     const created = await createRun(repo, { pitchId: pitch.id, user: GP });
     let run = created;
     while (run.status !== "synthesizing") run = (await advanceRun(repo, run.id)).run;
-    expect(run.state.shark_failures).toEqual({ product: "failed" });
+    expect(run.state.shark_failures).toEqual({}); // M4: product's retry succeeded
     const before = run.state.shark_outputs;
     // Simulate a replan that reruns only the skeptic (pretend it had failed before).
     await repo.updateRun(run.id, { status: "analyzing", state: { ...run.state, rerun: ["skeptic"], shark_failures: { product: "failed", skeptic: "failed" } } });

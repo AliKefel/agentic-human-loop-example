@@ -119,9 +119,33 @@ export function checkpointSnapshot(r: Run) {
 // advanceRun — exactly one transition per call, CAS on step_count.
 // ---------------------------------------------------------------------------
 
-async function failRun(repo: Repo, run: Run, error: string, extra: Partial<Run> = {}): Promise<AdvanceResult> {
-  const updated = await repo.updateRun(run.id, { ...extra, status: "failed", error, step_count: run.step_count + 1, completed_at: new Date().toISOString() }, run.step_count);
-  if (!updated) return { status: "conflict", run: await repo.getRun(run.id) };
+type Usage = StepCtx["usage"];
+const NO_USAGE: Usage = { tokens: 0, cost: 0 };
+
+/**
+ * A step that lost the CAS may still have spent tokens. Adds that usage to the run without
+ * bumping step_count (re-read + CAS on the current step_count, up to 3 tries) so budget
+ * accounting never undercounts.
+ */
+async function addLoserUsage(repo: Repo, runId: string, usage: Usage): Promise<void> {
+  if (usage.tokens <= 0 && usage.cost <= 0) return;
+  for (let i = 0; i < 3; i++) {
+    const cur = await repo.getRun(runId);
+    const ok = await repo.updateRun(runId, { tokens_used: cur.tokens_used + usage.tokens, cost_usd: +(cur.cost_usd + usage.cost).toFixed(6) }, cur.step_count);
+    if (ok) return;
+  }
+  console.warn(`run ${runId}: could not record ${usage.tokens} tokens from a lost step after 3 tries`);
+}
+
+const lost = async (repo: Repo, runId: string, usage: Usage): Promise<AdvanceResult> => {
+  await addLoserUsage(repo, runId, usage);
+  return { status: "conflict", run: await repo.getRun(runId) };
+};
+
+async function failRun(repo: Repo, run: Run, error: string, usage: Usage = NO_USAGE): Promise<AdvanceResult> {
+  const totals = { tokens_used: run.tokens_used + usage.tokens, cost_usd: +(run.cost_usd + usage.cost).toFixed(6) };
+  const updated = await repo.updateRun(run.id, { ...totals, status: "failed", error, step_count: run.step_count + 1, completed_at: new Date().toISOString() }, run.step_count);
+  if (!updated) return lost(repo, run.id, usage);
   await repo.audit({ ...SYSTEM, action: "run.failed", entity: "run", entity_id: run.id, details: { from: run.status, error } });
   return { status: "advanced", run: updated };
 }
@@ -148,8 +172,9 @@ export async function advanceRun(repo: Repo, runId: string): Promise<AdvanceResu
   try {
     result = await handler(ctx);
   } catch (e) {
-    // M4 adds retries/fallback; in M2 any handler error fails the run.
-    return failRun(repo, run, e instanceof Error ? e.message : String(e), usageTotals());
+    // Shark calls already retried / fell back inside the handler (reliability.ts); anything
+    // that still escapes a handler is unrecoverable for this step and fails the run.
+    return failRun(repo, run, e instanceof Error ? e.message : String(e), ctx.usage);
   }
 
   const updated = await repo.updateRun(
@@ -163,8 +188,9 @@ export async function advanceRun(repo: Repo, runId: string): Promise<AdvanceResu
     },
     run.step_count,
   );
-  // Lost the CAS: another advance (or a cancel, which bumps step_count) won. Write nothing.
-  if (!updated) return { status: "conflict", run: await repo.getRun(run.id) };
+  // Lost the CAS: another advance (or a cancel, which bumps step_count) won. Write nothing
+  // of this step's results — only its token spend, so the budget never undercounts.
+  if (!updated) return lost(repo, run.id, ctx.usage);
 
   const duration_ms = Date.now() - t0;
   await repo.addCheckpoint({

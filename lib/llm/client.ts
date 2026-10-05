@@ -13,7 +13,7 @@ export type LlmResponse = { text: string; toolUses: LlmToolUse[]; inputTokens: n
 let client: Anthropic | null = null;
 export async function callLlm(req: LlmRequest): Promise<LlmResponse> {
   if (isMockMode()) return mockCall(req);
-  client ??= new Anthropic();
+  client ??= new Anthropic({ maxRetries: 0 }); // the harness owns retries (reliability.ts)
   const started = Date.now();
   try {
     const msg = await client.messages.create(

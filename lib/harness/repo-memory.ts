@@ -148,8 +148,9 @@ export class MemoryRepo implements Repo {
     if (this._checkpoints.some((x) => x.run_id === c.run_id && x.seq === c.seq)) throw new Error(`checkpoints: duplicate (run_id, seq) (${c.run_id}, ${c.seq})`);
     this._checkpoints.push({ id: randomUUID(), ...clone(c), created_at: new Date().toISOString() });
   }
-  async lastCheckpoint(runId: string, filter?: { excludeNodes?: string[] }) {
-    const rows = this._checkpoints.filter((x) => x.run_id === runId && !filter?.excludeNodes?.includes(x.node));
+  async lastCheckpoint(runId: string, filter?: { excludeNodes?: string[]; statusIn?: string[] }) {
+    const statusOf = (state: unknown) => (state && typeof state === "object" ? (state as { status?: unknown }).status : undefined);
+    const rows = this._checkpoints.filter((x) => x.run_id === runId && !filter?.excludeNodes?.includes(x.node) && (!filter?.statusIn || filter.statusIn.includes(statusOf(x.state) as string)));
     if (!rows.length) return null;
     const top = rows.reduce((a, b) => (b.seq > a.seq ? b : a));
     return clone({ seq: top.seq, node: top.node, state: top.state as any });

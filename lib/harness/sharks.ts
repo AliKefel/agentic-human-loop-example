@@ -8,6 +8,7 @@ import { SYSTEM } from "./audit";
 import { AgentCallError, type StepCtx } from "./agent";
 import { checkTool, dataContext, deniedMessage, isToolName } from "./permissions";
 import { neutralizeUntrustedTags, untrustedPitch, type Prompt } from "./planner";
+import { budgetAllows, withReliability } from "./reliability";
 
 /**
  * Parallel Shark agents (SPEC §2.5–2.6). The harness runs the tool loop: agents only *request*
@@ -145,31 +146,46 @@ export async function runSharkOnce(ctx: StepCtx, agent: AgentName, model: string
   return parsed.data;
 }
 
-/** One timed attempt: an AbortController bounded by config.reliability.timeout_ms. */
-export async function timedAttempt(ctx: StepCtx, agent: AgentName, model: string, attempt: number, variant?: string): Promise<SharkOutput> {
-  const ac = new AbortController();
-  const timer = setTimeout(() => ac.abort(), ctx.config.reliability.timeout_ms);
-  try {
-    return await runSharkOnce(ctx, agent, model, attempt, ac.signal, variant ?? founderVariant(ctx));
-  } finally {
-    clearTimeout(timer);
-  }
+/**
+ * The full attempt sequence for one agent (SPEC §2.7): withReliability runs attempts 1..retries+1
+ * on the primary model, each with its own timeout, then one fallback attempt. Every attempt
+ * records its own agent_calls row (runSharkOnce). Never throws.
+ */
+export async function attemptAgent(ctx: StepCtx, agent: AgentName, variant: string | undefined = founderVariant(ctx), sleep?: (ms: number) => Promise<void>): Promise<SharkResult> {
+  const r = await withReliability(ctx.config.reliability, ({ model, attempt, signal }) => runSharkOnce(ctx, agent, model, attempt, signal, variant), sleep);
+  return r.ok && r.value ? { agent, output: r.value } : { agent, failure: "failed" };
 }
 
 /**
- * The full attempt sequence for one agent. M3: a single attempt on the primary model, any throw → "failed".
- * M4 replaces the body with withReliability (retries, fallback, budget) without touching runSharks.
+ * Budget gate, then the included Sharks in parallel (Promise.allSettled); never throws.
+ * Agents are considered in plan order; each included agent reserves est_tokens_per_shark so
+ * parallel calls cannot jointly overrun the cap. A skipped agent gets a skipped_budget
+ * agent_calls row (0 tokens) and a budget.exceeded audit event.
  */
-export async function attemptAgent(ctx: StepCtx, agent: AgentName, variant?: string): Promise<SharkResult> {
-  try {
-    return { agent, output: await timedAttempt(ctx, agent, ctx.config.reliability.primary_model, 1, variant) };
-  } catch {
-    return { agent, failure: "failed" };
-  }
-}
-
-/** Runs the given Sharks in parallel (Promise.allSettled); never throws. */
 export async function runSharks(ctx: StepCtx, agents: AgentName[], variant?: string): Promise<SharkResult[]> {
-  const settled = await Promise.allSettled(agents.map((a) => attemptAgent(ctx, a, variant)));
-  return settled.map((s, i) => (s.status === "fulfilled" ? s.value : { agent: agents[i], failure: "failed" as const }));
+  const { config, run, repo } = ctx;
+  const est = config.budgets.est_tokens_per_shark;
+  const used = { tokens: run.tokens_used + ctx.usage.tokens, cost: +(run.cost_usd + ctx.usage.cost).toFixed(6) };
+  let reserved = used.tokens;
+  const included: AgentName[] = [];
+  const skipped = new Set<AgentName>();
+  for (const agent of agents) {
+    if (!budgetAllows(config, { tokens: reserved + est, cost: used.cost }, 0)) {
+      skipped.add(agent);
+      await repo.addAgentCall({
+        run_id: run.id, agent, purpose: "analyze", model: config.reliability.primary_model, attempt: 0, fallback_used: false,
+        input_tokens: 0, output_tokens: 0, cost_usd: 0, latency_ms: 0, status: "skipped_budget",
+        error: `budget: ${used.tokens} used + ${reserved - used.tokens} reserved + ${est} est > ${config.budgets.max_tokens} tokens (or $${used.cost} ≥ $${config.budgets.max_usd})`, output: null,
+      });
+      await repo.audit({ ...SYSTEM, action: "budget.exceeded", entity: "run", entity_id: run.id, details: { agent, used: used.tokens, cap: config.budgets.max_tokens } });
+      continue;
+    }
+    reserved += est;
+    included.push(agent);
+  }
+
+  const settled = await Promise.allSettled(included.map((a) => attemptAgent(ctx, a, variant ?? founderVariant(ctx))));
+  const byAgent = new Map<AgentName, SharkResult>();
+  settled.forEach((s, i) => byAgent.set(included[i], s.status === "fulfilled" ? s.value : { agent: included[i], failure: "failed" }));
+  return agents.map((a) => (skipped.has(a) ? { agent: a, failure: "skipped_budget" as const } : byAgent.get(a)!));
 }

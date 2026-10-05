@@ -84,9 +84,10 @@ export class SupabaseRepo implements Repo {
     const { error } = await this.db.from("checkpoints").insert(c);
     if (error) this.fail("checkpoints", "insert", error);
   }
-  async lastCheckpoint(runId: string, filter?: { excludeNodes?: string[] }) {
+  async lastCheckpoint(runId: string, filter?: { excludeNodes?: string[]; statusIn?: string[] }) {
     let q = this.db.from("checkpoints").select("seq,node,state").eq("run_id", runId);
     for (const n of filter?.excludeNodes ?? []) q = q.neq("node", n);
+    if (filter?.statusIn) q = q.in("state->>status", filter.statusIn);
     const { data, error } = await q.order("seq", { ascending: false }).limit(1).maybeSingle();
     if (error) this.fail("checkpoints", "select", error);
     return data ? { seq: data.seq as number, node: data.node as string, state: data.state } : null;
