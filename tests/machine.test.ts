@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { MemoryRepo } from "@/lib/harness/repo-memory";
 import { createRun } from "@/lib/harness/runs";
-import { advanceRun, runToRest } from "@/lib/harness/machine";
+import { advanceRun, HANDLERS, runToRest, withState } from "@/lib/harness/machine";
 import { buildPlanPrompt, buildTriagePrompt } from "@/lib/harness/planner";
 import { GP_ID, SEED_USERS } from "@/lib/mock/seed-users";
 import { CONFIG_V1 } from "@/lib/mock/seed-config";
@@ -44,6 +44,10 @@ describe("advanceRun / state machine", () => {
     expect(cps.map((c) => c.seq)).toEqual([0, 1, 2, 3, 4, 5, 6]);
     expect(cps.slice(1).map((c) => c.node)).toEqual(["queued", "triage", "planning", "analyzing", "synthesizing", "policy_check"]);
     expect((cps[3].state as { plan: unknown }).plan).not.toBeNull();
+    // SPEC §2.3: snapshot includes budget used (values after the step)
+    expect(cps[3].node).toBe("planning");
+    expect(cps[3].state).toMatchObject({ status: "analyzing", tokens_used: 600 + 80 + 900 + 250, cost_usd: expect.any(Number), step_count: 3, replans: 0, recommendation: null, final_terms: null });
+    expect((cps[3].state as { cost_usd: number }).cost_usd).toBeGreaterThan(0);
     const calls = repo.agentCalls.filter((a) => a.run_id === run.id);
     expect(calls.map((a) => [a.agent, a.purpose, a.status])).toEqual([["lead", "triage", "ok"], ["lead", "plan", "ok"]]);
     expect(done.tokens_used).toBe(600 + 80 + 900 + 250);
@@ -71,6 +75,29 @@ describe("advanceRun / state machine", () => {
     expect([a.status, b.status].sort()).toEqual(["advanced", "conflict"]);
     expect(repo.auditLog.filter((x) => x.action === "run.step")).toHaveLength(2);
     expect(repo.checkpoints.filter((c) => c.run_id === run.id)).toHaveLength(3);
+  });
+
+  it("handler effects run exactly once, only for the CAS winner", async () => {
+    const repo = new MemoryRepo();
+    const run = await start(repo, "brewbot");
+    const ran: string[] = [];
+    const original = HANDLERS.queued!;
+    HANDLERS.queued = async () => ({ status: "triage", effects: async (committed) => { ran.push(committed.status); } });
+    try {
+      const [a, b] = await Promise.all([advanceRun(repo, run.id), advanceRun(repo, run.id)]);
+      expect([a.status, b.status].sort()).toEqual(["advanced", "conflict"]);
+      expect(ran).toEqual(["triage"]);
+    } finally {
+      HANDLERS.queued = original;
+    }
+  });
+
+  it("withState shallow-merges over run.state", async () => {
+    const repo = new MemoryRepo();
+    const run = await start(repo, "brewbot");
+    const s = withState(run, { founder_asked: true });
+    expect(s).toEqual({ ...run.state, founder_asked: true });
+    expect(run.state.founder_asked).toBe(false);
   });
 
   it("max_steps fails the run", async () => {

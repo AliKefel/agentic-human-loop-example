@@ -14,6 +14,7 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
     return NextResponse.json({ status, run }, { status: status === "conflict" ? 409 : 200 });
   } catch (e) {
     if (e instanceof NotFoundError) return NextResponse.json({ error: e.message }, { status: 404 });
-    throw e;
+    console.error(`advance ${id} failed`, e);
+    return NextResponse.json({ error: "internal_error" }, { status: 500 });
   }
 }
