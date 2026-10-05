@@ -7,7 +7,8 @@ import { Gavel, MessageSquareReply, RotateCcw, XCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ApprovalDrawer, KIND_LABEL } from "@/components/queue/approval-drawer";
 import { cn } from "cn";
-import { TERMINAL, type QueueItem, type RunStatus, type User } from "@/lib/types";
+import { runActionsFor } from "@/lib/run-view";
+import type { QueueItem, RunStatus, User } from "@/lib/types";
 
 type Props = {
   runId: string;
@@ -26,10 +27,8 @@ export function RunActions({ runId, status, canResume, review, className }: Prop
   const router = useRouter();
   const [pending, start] = useTransition();
   const [open, setOpen] = useState(false);
-  const showCancel = !TERMINAL.includes(status);
-  const showResume = canResume && status === "failed";
-  const showFounder = status === "awaiting_founder";
-  if (!showCancel && !showResume && !review && !showFounder) return null;
+  const { cancel: showCancel, resume: showResume, founder: showFounder, any } = runActionsFor(status, canResume, !!review);
+  if (!any) return null;
 
   const post = (action: "cancel" | "resume") =>
     start(async () => {

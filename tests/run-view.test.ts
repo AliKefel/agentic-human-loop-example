@@ -109,3 +109,16 @@ describe("sharkBadges", () => {
     expect(sharkBadges("market", calls, [])).toEqual(["skipped"]);
   });
 });
+
+describe("runActionsFor (mobile action bar only when something applies)", () => {
+  it("terminal runs without review/resume have no actions; waiting/failed runs do", async () => {
+    const { runActionsFor } = await import("@/lib/run-view");
+    expect(runActionsFor("offer_sent", true, false).any).toBe(false);
+    expect(runActionsFor("passed", false, false).any).toBe(false);
+    expect(runActionsFor("cancelled", true, false).any).toBe(false);
+    expect(runActionsFor("failed", false, false).any).toBe(false); // terminal; only a GP may resume
+    expect(runActionsFor("failed", true, false)).toMatchObject({ resume: true, cancel: false, any: true });
+    expect(runActionsFor("awaiting_founder", false, false)).toMatchObject({ founder: true, cancel: true, any: true });
+    expect(runActionsFor("awaiting_approval", false, true)).toMatchObject({ review: true, any: true });
+  });
+});

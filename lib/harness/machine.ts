@@ -2,6 +2,7 @@ import { PlanSchema, TriageSchema } from "@/lib/schemas";
 import { TERMINAL, WORKING, type ApprovalRow, type PolicyOutcome, type Run, type RunStatus } from "@/lib/types";
 import type { Repo } from "./repo";
 import { SYSTEM } from "./audit";
+import { RUN_CANCELLED_REASON } from "./queue-stats";
 import { callAgentJson, type StepCtx } from "./agent";
 import { exceedsFundMax, prescan } from "./prescan";
 import { buildPlanPrompt, buildTriagePrompt } from "./planner";
@@ -137,7 +138,7 @@ const policyCheck: Handler = async (ctx) => {
     });
     // Close the race window: if a cancel landed while inserting, it could not see this row — close it ourselves.
     if ((await repo.getRun(run.id)).status !== status) {
-      await repo.decideApprovalRow(approval.id, { status: "rejected", decided_by: null, reason: "run cancelled", final_terms: null, is_override: false });
+      await repo.decideApprovalRow(approval.id, { status: "rejected", decided_by: null, reason: RUN_CANCELLED_REASON, final_terms: null, is_override: false });
       return;
     }
     await repo.audit({ ...SYSTEM, action: "approval.requested", entity: "approval", entity_id: approval.id, details: { kind, required_role, rule: decision.rule } });

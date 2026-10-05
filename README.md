@@ -21,4 +21,6 @@ pnpm dev                     # http://localhost:3000
 
 ## Scripts
 
-`pnpm dev` · `pnpm build` · `pnpm test` · `pnpm db:reset`
+`pnpm dev` · `pnpm build` · `pnpm test` · `pnpm db:reset` · `pnpm demo:seed`
+
+`pnpm demo:seed` adds 48 Mock-mode runs (12 pitches × L0–L3), resolves them with a scripted human policy and back-dates them over 14 days for the Fund Overview. It adds runs every time; `pnpm db:reset && pnpm demo:seed` gives a clean demo database (about 2–3 minutes; `DEMO_FAST=true` skips mock latencies).

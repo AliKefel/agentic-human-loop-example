@@ -192,3 +192,9 @@ export function snapshotStatus(state: unknown): string | null {
 
 /** Autonomy level names (SPEC §2.8). */
 export const AUTONOMY_NAME = ["L0 · Human decides", "L1 · Approval required", "L2 · Assisted", "L3 · Full auto"] as const;
+
+/** Which run actions apply (SPEC §5.3). Shared by RunActions and the run page, which hides the mobile action bar when none apply. */
+export function runActionsFor(status: RunStatus, canResume: boolean, hasReview: boolean) {
+  const a = { cancel: !TERMINAL.includes(status), resume: canResume && status === "failed", founder: status === "awaiting_founder", review: hasReview };
+  return { ...a, any: a.cancel || a.resume || a.founder || a.review };
+}

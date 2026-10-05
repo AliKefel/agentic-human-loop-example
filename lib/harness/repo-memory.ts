@@ -104,6 +104,13 @@ export class MemoryRepo implements Repo {
     return clone(u);
   }
 
+  async listRuns(limit: number) {
+    return this._runs
+      .map((r, idx) => ({ r, idx }))
+      .sort((a, b) => (a.r.started_at < b.r.started_at ? 1 : a.r.started_at > b.r.started_at ? -1 : b.idx - a.idx))
+      .slice(0, limit)
+      .map((x) => clone(x.r));
+  }
   async createRun(r: Pick<Run, "pitch_id" | "config_version" | "autonomy_level" | "started_by">) {
     const run: Run = {
       id: randomUUID(),
@@ -168,11 +175,20 @@ export class MemoryRepo implements Repo {
   async listAgentCalls(runId: string) {
     return this._agentCalls.filter((x) => x.run_id === runId).map(clone); // insertion order = oldest first
   }
+  async listAgentCallsForRuns(runIds: string[]) {
+    const ids = new Set(runIds);
+    return this._agentCalls.filter((x) => ids.has(x.run_id)).map((x) => ({ ...clone(x), output: null }));
+  }
   async addToolCall(t: Omit<ToolCallRow, "id" | "created_at">) {
     this._toolCalls.push({ ...clone(t), id: randomUUID(), created_at: new Date().toISOString() });
   }
   async listToolCalls(runId: string) {
     return this._toolCalls.filter((x) => x.run_id === runId).map(clone);
+  }
+
+  async listToolCallsForRuns(runIds: string[]) {
+    const ids = new Set(runIds);
+    return this._toolCalls.filter((x) => ids.has(x.run_id)).map((x) => ({ ...clone(x), args: {}, result: null }));
   }
 
   async addApproval(a: Omit<ApprovalRow, "id" | "created_at" | "status" | "decided_by" | "reason" | "decided_at" | "final_terms" | "is_override">) {
@@ -199,6 +215,11 @@ export class MemoryRepo implements Repo {
 
   async listApprovalsForRun(runId: string) {
     return this._approvals.filter((x) => x.run_id === runId).map(clone);
+  }
+
+  async listApprovalsForRuns(runIds: string[]) {
+    const ids = new Set(runIds);
+    return this._approvals.filter((x) => ids.has(x.run_id)).map(clone);
   }
 
   async listApprovals(filter: { status?: "pending" | "decided"; kind?: ApprovalRow["kind"] } = {}): Promise<ApprovalQueueRow[]> {

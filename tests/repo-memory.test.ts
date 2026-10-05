@@ -255,4 +255,47 @@ describe("MemoryRepo list-by-run (run detail view)", () => {
     expect(got.map((m) => m.id)).toEqual([m2.id, m1.id]);
     expect(await repo.getMemoriesByIds([])).toEqual([]);
   });
+
+  it("listRuns is newest first (started_at, ties later insert first) and honors the limit", async () => {
+    const repo = new MemoryRepo();
+    const a = await newRun(repo);
+    const b = await newRun(repo);
+    const c = await newRun(repo);
+    await repo.updateRun(a.id, { started_at: "2026-03-03T00:00:00.000Z" });
+    await repo.updateRun(b.id, { started_at: "2026-03-01T00:00:00.000Z" });
+    await repo.updateRun(c.id, { started_at: "2026-03-01T00:00:00.000Z" });
+    expect((await repo.listRuns(10)).map((r) => r.id)).toEqual([a.id, c.id, b.id]);
+    expect((await repo.listRuns(2)).map((r) => r.id)).toEqual([a.id, c.id]);
+    expect(await new MemoryRepo().listRuns(5)).toEqual([]);
+  });
+
+  it("bulk lists for a set of runs: approvals (full rows), agent/tool calls (payloads stripped), oldest first", async () => {
+    const repo = new MemoryRepo();
+    const r1 = await newRun(repo);
+    const r2 = await newRun(repo);
+    const r3 = await newRun(repo);
+    const a1 = await newApproval(repo, r1.id);
+    await newApproval(repo, r3.id);
+    const a2 = await newApproval(repo, r2.id);
+    const call = { purpose: "analyze" as const, model: "m", attempt: 1, fallback_used: false, input_tokens: 10, output_tokens: 5, cost_usd: 0.01, latency_ms: 100, status: "ok" as const, error: null, output: { big: "payload" } };
+    const c1 = await repo.addAgentCall({ ...call, run_id: r2.id, agent: "market" });
+    await repo.addAgentCall({ ...call, run_id: r3.id, agent: "finance" });
+    const c2 = await repo.addAgentCall({ ...call, run_id: r1.id, agent: "lead" });
+    await repo.addToolCall({ run_id: r1.id, agent_call_id: c2, agent: "market", tool: "market_size_lookup", args: { q: 1 }, result: { r: 1 }, latency_ms: 5, permitted: false });
+    await repo.addToolCall({ run_id: r3.id, agent_call_id: null, agent: "market", tool: "market_size_lookup", args: {}, result: null, latency_ms: 5, permitted: true });
+
+    const ids = [r1.id, r2.id];
+    expect((await repo.listApprovalsForRuns(ids)).map((a) => a.id)).toEqual([a1.id, a2.id]);
+    expect((await repo.listApprovalsForRuns(ids))[0]).toEqual(await repo.getApproval(a1.id));
+    const calls = await repo.listAgentCallsForRuns(ids);
+    expect(calls.map((c) => c.id)).toEqual([c1, c2]);
+    expect(calls[0]).toMatchObject({ run_id: r2.id, agent: "market", input_tokens: 10, output_tokens: 5, cost_usd: 0.01, latency_ms: 100, status: "ok", output: null });
+    expect(repo.agentCalls.find((c) => c.id === c1)?.output).toEqual({ big: "payload" }); // stored row untouched
+    const tools = await repo.listToolCallsForRuns(ids);
+    expect(tools).toHaveLength(1);
+    expect(tools[0]).toMatchObject({ run_id: r1.id, tool: "market_size_lookup", permitted: false, args: {}, result: null });
+    expect(await repo.listApprovalsForRuns([])).toEqual([]);
+    expect(await repo.listAgentCallsForRuns([])).toEqual([]);
+    expect(await repo.listToolCallsForRuns([])).toEqual([]);
+  });
 });

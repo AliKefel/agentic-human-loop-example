@@ -22,7 +22,8 @@ import { queueItemFor, toQueueRow } from "@/lib/harness/queue-data";
 import { getActingUser, listUsers } from "@/lib/current-user";
 import { isMockMode } from "@/lib/env";
 import { loadRunView } from "@/lib/run-view-server";
-import { SHARKS, SHARK_LABEL, deriveGraph, deriveSteps, sharkBadges, sharkStats, valuationData } from "@/lib/run-view";
+import { cn } from "cn";
+import { SHARKS, SHARK_LABEL, runActionsFor, deriveGraph, deriveSteps, sharkBadges, sharkStats, valuationData } from "@/lib/run-view";
 import { duration } from "@/lib/format";
 import type { Repo } from "@/lib/harness/repo";
 import type { Pitch, Run, User } from "@/lib/types";
@@ -56,10 +57,12 @@ export default async function RunPage({ params }: { params: Promise<{ id: string
     { label: "Elapsed", value: duration(new Date(run.completed_at ?? view.checkpoints.at(-1)?.created_at ?? run.started_at).getTime() - new Date(run.started_at).getTime()) },
   ];
 
-  const actions = <RunActions runId={run.id} status={run.status} canResume={user.role === "general_partner"} review={review} />;
+  const canResume = user.role === "general_partner";
+  const actions = <RunActions runId={run.id} status={run.status} canResume={canResume} review={review} />;
+  const hasActions = runActionsFor(run.status, canResume, !!review).any;
 
   return (
-    <div className="mx-auto w-full max-w-[1400px] space-y-4 pb-20 lg:pb-0" data-testid="run-view">
+    <div className={cn("mx-auto w-full max-w-[1400px] space-y-4 lg:pb-0", hasActions && "pb-20")} data-testid="run-view">
       <RealtimeRefresh runId={run.id} />
       <AutoAdvance runId={run.id} status={run.status} />
       <RunHeader run={run} pitch={pitch} steps={steps} startedBy={view.startedByName} actions={<div className="hidden lg:block">{actions}</div>} />
@@ -158,7 +161,7 @@ export default async function RunPage({ params }: { params: Promise<{ id: string
         </Card>
       </div>
 
-      <div className="fixed inset-x-0 bottom-0 z-20 border-t bg-background/95 px-4 py-3 backdrop-blur lg:hidden">{actions}</div>
+      {hasActions && <div className="fixed inset-x-0 bottom-0 z-20 border-t bg-background/95 px-4 py-3 backdrop-blur lg:hidden" data-testid="mobile-action-bar">{actions}</div>}
     </div>
   );
 }

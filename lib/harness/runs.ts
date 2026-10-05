@@ -3,6 +3,7 @@ import type { Repo } from "./repo";
 import { actor } from "./audit";
 import { ConflictError, ForbiddenError } from "./errors";
 import { initialRunState } from "./run-state";
+import { RUN_CANCELLED_REASON } from "./queue-stats";
 
 export async function createRun(
   repo: Repo,
@@ -31,7 +32,7 @@ export async function cancelRun(repo: Repo, runId: string, user: User): Promise<
     const updated = await repo.updateRun(runId, { status: "cancelled", step_count: run.step_count + 1, completed_at: new Date().toISOString() }, run.step_count);
     if (!updated) continue; // an advance committed in between: re-read and try again
     const approval = await repo.pendingApprovalForRun(runId);
-    if (approval) await repo.decideApprovalRow(approval.id, { status: "rejected", decided_by: user.id, reason: "run cancelled", final_terms: null, is_override: false });
+    if (approval) await repo.decideApprovalRow(approval.id, { status: "rejected", decided_by: user.id, reason: RUN_CANCELLED_REASON, final_terms: null, is_override: false });
     await repo.audit({ ...actor(user), action: "run.cancelled", entity: "run", entity_id: runId, details: { from: run.status, ...(approval ? { approval_id: approval.id } : {}) } });
     return updated;
   }

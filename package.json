@@ -8,7 +8,8 @@
     "start": "next start",
     "lint": "eslint",
     "test": "vitest run",
-    "db:reset": "node scripts/db-reset.mjs"
+    "db:reset": "node scripts/db-reset.mjs",
+    "demo:seed": "NODE_OPTIONS=--conditions=react-server tsx scripts/demo-data.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.131.0",

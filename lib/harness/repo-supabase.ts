@@ -19,6 +19,14 @@ const toMemory = (r: Row): MemoryRow => r as MemoryRow;
 const toIncident = (r: Row): IncidentRow => r as IncidentRow;
 const toConfig = (r: Row): HarnessConfig => r as HarnessConfig;
 
+/** PostgREST caps a response (default 1000 rows) and long `in.(…)` lists bloat the URL: page and chunk. */
+const PAGE = 1000;
+const ID_CHUNK = 100;
+const AGENT_CALL_COLS = "id,run_id,agent,purpose,model,attempt,fallback_used,input_tokens,output_tokens,cost_usd,latency_ms,status,error,created_at";
+const TOOL_CALL_COLS = "id,run_id,agent_call_id,agent,tool,latency_ms,permitted,created_at";
+const byCreatedThenId = (a: { created_at: string; id: string }, b: { created_at: string; id: string }) =>
+  Date.parse(a.created_at) - Date.parse(b.created_at) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const escapeLike = (s: string) => s.replace(/[\\%_]/g, (c) => `\\${c}`);
 
@@ -48,6 +56,21 @@ export class SupabaseRepo implements Repo {
     return data;
   }
 
+  /** Rows of `table` whose run_id is in `runIds`, chunked by id and paged; merged oldest first (created_at, then id). */
+  private async rowsForRuns(table: string, cols: string, runIds: string[]): Promise<Row[]> {
+    const out: Row[] = [];
+    for (let i = 0; i < runIds.length; i += ID_CHUNK) {
+      const chunk = runIds.slice(i, i + ID_CHUNK);
+      for (let from = 0; ; from += PAGE) {
+        const { data, error } = await this.db.from(table).select(cols).in("run_id", chunk).order("created_at", { ascending: true }).order("id", { ascending: true }).range(from, from + PAGE - 1);
+        if (error) this.fail(table, "select", error);
+        out.push(...((data ?? []) as unknown as Row[]));
+        if (!data || data.length < PAGE) break;
+      }
+    }
+    return out.sort((a, b) => byCreatedThenId(a as { created_at: string; id: string }, b as { created_at: string; id: string }));
+  }
+
   async getPitch(id: string) { return toPitch(await this.one("pitches", "id", id)); }
   async getPitchBySlug(slug: string) { return toPitch(await this.one("pitches", "slug", slug)); }
   async listPitches() {
@@ -67,6 +90,17 @@ export class SupabaseRepo implements Repo {
   async getActiveConfig() { return toConfig(await this.one("harness_configs", "is_active", "true")); }
   async getUser(id: string) { return toUser(await this.one("users", "id", id)); }
 
+  async listRuns(limit: number) {
+    const out: Run[] = [];
+    for (let from = 0; from < limit; from += PAGE) {
+      const to = Math.min(limit, from + PAGE) - 1;
+      const { data, error } = await this.db.from("runs").select("*").order("started_at", { ascending: false }).order("id", { ascending: false }).range(from, to);
+      if (error) this.fail("runs", "select", error);
+      out.push(...(data ?? []).map(toRun));
+      if (!data || data.length < to - from + 1) break;
+    }
+    return out;
+  }
   async createRun(r: Pick<Run, "pitch_id" | "config_version" | "autonomy_level" | "started_by">) {
     return toRun(await this.insert("runs", { pitch_id: r.pitch_id, config_version: r.config_version, autonomy_level: r.autonomy_level, started_by: r.started_by, state: initialRunState() }));
   }
@@ -108,6 +142,9 @@ export class SupabaseRepo implements Repo {
     if (error) this.fail("agent_calls", "select", error);
     return (data ?? []).map(toAgentCall);
   }
+  async listAgentCallsForRuns(runIds: string[]) {
+    return (await this.rowsForRuns("agent_calls", AGENT_CALL_COLS, runIds)).map((r) => toAgentCall({ ...r, output: null }));
+  }
   async addToolCall(t: Omit<ToolCallRow, "id" | "created_at">) {
     const { error } = await this.db.from("tool_calls").insert(t);
     if (error) this.fail("tool_calls", "insert", error);
@@ -116,6 +153,10 @@ export class SupabaseRepo implements Repo {
     const { data, error } = await this.db.from("tool_calls").select("*").eq("run_id", runId).order("created_at", { ascending: true }).order("id", { ascending: true });
     if (error) this.fail("tool_calls", "select", error);
     return (data ?? []) as ToolCallRow[];
+  }
+
+  async listToolCallsForRuns(runIds: string[]) {
+    return (await this.rowsForRuns("tool_calls", TOOL_CALL_COLS, runIds)).map((r) => ({ ...r, args: {}, result: null }) as ToolCallRow);
   }
 
   async addApproval(a: Omit<ApprovalRow, "id" | "created_at" | "status" | "decided_by" | "reason" | "decided_at" | "final_terms" | "is_override">) {
@@ -139,6 +180,10 @@ export class SupabaseRepo implements Repo {
     const { data, error } = await this.db.from("approvals").select("*").eq("run_id", runId).order("created_at", { ascending: true }).order("id", { ascending: true });
     if (error) this.fail("approvals", "select", error);
     return (data ?? []).map(toApproval);
+  }
+
+  async listApprovalsForRuns(runIds: string[]) {
+    return (await this.rowsForRuns("approvals", "*", runIds)).map(toApproval);
   }
 
   async listApprovals(filter: { status?: "pending" | "decided"; kind?: ApprovalRow["kind"] } = {}): Promise<ApprovalQueueRow[]> {

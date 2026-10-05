@@ -13,6 +13,8 @@ export interface Repo {
   getConfig(version: number): Promise<HarnessConfig>;
   getActiveConfig(): Promise<HarnessConfig>;
   getUser(id: string): Promise<User>;
+  /** The most recent `limit` runs, newest first (started_at, then insertion / id — later first). */
+  listRuns(limit: number): Promise<Run[]>;
   createRun(r: Pick<Run, "pitch_id" | "config_version" | "autonomy_level" | "started_by">): Promise<Run>;
   getRun(id: string): Promise<Run>;
   /** compare-and-set: applies only if expectStep is undefined or run.step_count === expectStep; returns the updated run, or null if the CAS was lost. Unknown id throws NotFoundError (null never means "not found"). There is NO terminal-status guard: callers bump step_count to invalidate in-flight steps. */
@@ -25,9 +27,13 @@ export interface Repo {
   addAgentCall(a: Omit<AgentCallRow, "id" | "created_at">): Promise<string>;
   /** The run's agent calls, oldest first (created_at, then insertion / id). */
   listAgentCalls(runId: string): Promise<AgentCallRow[]>;
+  /** Agent calls of the given runs for aggregates, oldest first; `output` is omitted (always null). */
+  listAgentCallsForRuns(runIds: string[]): Promise<AgentCallRow[]>;
   addToolCall(t: Omit<ToolCallRow, "id" | "created_at">): Promise<void>;
   /** The run's tool calls, oldest first (created_at, then insertion / id). */
   listToolCalls(runId: string): Promise<ToolCallRow[]>;
+  /** Tool calls of the given runs for aggregates, oldest first; `args` ({}) and `result` (null) are omitted. */
+  listToolCallsForRuns(runIds: string[]): Promise<ToolCallRow[]>;
   addApproval(a: Omit<ApprovalRow, "id" | "created_at" | "status" | "decided_by" | "reason" | "decided_at" | "final_terms" | "is_override">): Promise<ApprovalRow>;
   getApproval(id: string): Promise<ApprovalRow>;
   /** CAS on status='pending'; null if already decided. Unknown id throws NotFoundError. */
@@ -36,6 +42,8 @@ export interface Repo {
   pendingApprovalForRun(runId: string): Promise<ApprovalRow | null>;
   /** Every approval of the run (any status), oldest first (created_at, then insertion / id). */
   listApprovalsForRun(runId: string): Promise<ApprovalRow[]>;
+  /** Every approval (any status) of the given runs, full rows, oldest first (created_at, then insertion / id). */
+  listApprovalsForRuns(runIds: string[]): Promise<ApprovalRow[]>;
   /** Approvals joined with run/pitch fields; status "decided" = anything but pending. Oldest first (created_at, then id). */
   listApprovals(filter?: { status?: "pending" | "decided"; kind?: ApprovalRow["kind"] }): Promise<ApprovalQueueRow[]>;
   addFounderMessage(m: { run_id: string; direction: "to_founder" | "from_founder"; body: string; author_id: string | null }): Promise<void>;
