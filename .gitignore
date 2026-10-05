@@ -13,3 +13,4 @@ supabase/.branches/
 .DS_Store
 *.log
 coverage/
+.superpowers/
