@@ -16,10 +16,12 @@ const round1 = (x: number) => Math.round(x * 10) / 10;
 
 /**
  * Review Focus #5. amount = min(model amount, ask, fund max check);
- * equity_pct = max(model equity, offered equity scaled to the amount), to 0.1; pass → terms null.
+ * equity_pct = max(model equity, offered equity scaled to the amount), to 0.1; pass or ask <= 0 → terms null.
  */
 export function clampTerms(s: Synthesis, pitch: Pitch, config: HarnessConfig): Synthesis {
-  if (s.recommendation === "pass" || !s.terms) return { ...s, terms: null };
+  // pass → no terms. A non-positive ask cannot anchor a clamp, so terms are dropped (null)
+  // rather than trusting the model's numbers; policy/humans see an invest without terms.
+  if (s.recommendation === "pass" || !s.terms || !(pitch.ask_amount > 0)) return { ...s, terms: null };
   const amount = Math.min(s.terms.amount, pitch.ask_amount, config.thresholds.fund_max_check);
   const floor = ceil1((pitch.equity_offered * amount) / pitch.ask_amount);
   return { ...s, terms: { amount, equity_pct: round1(Math.max(s.terms.equity_pct, floor)) } };

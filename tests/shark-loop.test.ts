@@ -87,6 +87,20 @@ describe("shark tool loop", () => {
     expect(ctx.repo.agentCalls[0]).toMatchObject({ status: "ok", input_tokens: 30, output_tokens: 15 });
   });
 
+  it("budget-exhausted turn still permission-checks: forbidden tool is denied, recorded and audited", async () => {
+    const ctx = await ctxFor("brewbot");
+    script = async (req) => (req.turn === 1 ? toolResp(["red_flag_scanner"], 1) : req.turn === 2 ? toolResp(["portfolio_lookup", "red_flag_scanner"], 2) : finalResp(good));
+    await runSharkOnce(ctx, "skeptic", "claude-sonnet-5-5", 1, new AbortController().signal);
+    const results = calls[2].messages.at(-1)!.content as Array<{ content: string; is_error?: boolean }>;
+    expect(results[0]).toEqual(expect.objectContaining({ content: "PERMISSION DENIED: portfolio_lookup requires portfolio access", is_error: true }));
+    expect(results[1]).toEqual(expect.objectContaining({ content: BUDGET_EXHAUSTED, is_error: true }));
+    const denied = ctx.repo.toolCalls.filter((t) => !t.permitted);
+    expect(denied).toHaveLength(1);
+    expect(denied[0]).toMatchObject({ agent: "skeptic", tool: "portfolio_lookup", result: { error: "permission_denied" } });
+    expect(ctx.repo.toolCalls.filter((t) => t.permitted)).toHaveLength(1); // exhausted permitted call not executed
+    expect(ctx.repo.auditLog.filter((a) => a.action === "tool.denied")).toHaveLength(1);
+  });
+
   it("an agent that keeps requesting tools after exhaustion errors with one agent_calls row", async () => {
     const ctx = await ctxFor("brewbot");
     script = async (req) => toolResp(["red_flag_scanner"], req.turn);
