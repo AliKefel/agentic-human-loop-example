@@ -62,9 +62,25 @@ describe("acceptance (SPEC §4, L2)", () => {
       for (const b of blobs) expect(JSON.stringify(b ?? null)).not.toContain("2000000");
     }
     if (e.slug === "greengrid") expect(repo.agentCalls.filter((c) => c.run_id === run.id && c.purpose === "analyze")).toHaveLength(0);
-    if (e.slug === "ledgerleaf") expect(repo.agentCalls.some((c) => c.run_id === run.id && c.agent === "finance" && c.fallback_used && c.status === "ok")).toBe(true);
-    if (e.slug === "dronedrop") expect(repo.agentCalls.some((c) => c.run_id === run.id && c.agent === "product" && c.status === "schema_fail")).toBe(true);
-    if (e.slug === "mealmate") expect(repo.toolCalls.some((t) => t.run_id === run.id && !t.permitted)).toBe(true);
+    if (e.slug === "ledgerleaf") {
+      // SPEC §4: three primary-model timeouts, then the fallback model answers.
+      const finance = repo.agentCalls.filter((c) => c.run_id === run.id && c.agent === "finance");
+      expect(finance.map((c) => c.status)).toEqual(["timeout", "timeout", "timeout", "ok"]);
+      expect(finance.map((c) => c.fallback_used)).toEqual([false, false, false, true]);
+    }
+    if (e.slug === "dronedrop") {
+      // SPEC §4: invalid JSON once, then a valid retry.
+      expect(repo.agentCalls.filter((c) => c.run_id === run.id && c.agent === "product").map((c) => c.status)).toEqual(["schema_fail", "ok"]);
+    }
+    if (e.slug === "mealmate") {
+      // SPEC §4: Market's portfolio_lookup is denied (logged + audited); the founder memory is recalled.
+      const denied = repo.toolCalls.filter((t) => t.run_id === run.id && !t.permitted);
+      expect(denied.map((t) => [t.agent, t.tool])).toEqual([["market", "portfolio_lookup"]]);
+      expect(repo.auditLog.filter((a) => a.action === "tool.denied" && a.entity_id === run.id)).toHaveLength(1);
+      const seededJordan = repo.memories.find((m) => m.scope === "founder" && m.subject === "Jordan Lee" && m.source_run_id === null)!;
+      expect(seededJordan).toBeDefined();
+      expect(run.state.memories_used).toContain(seededJordan.id);
+    }
     if (e.status === "offer_sent") expect(run.final_terms).toEqual((await repo.getRun(run.id)).state.synthesis?.terms);
   });
 });

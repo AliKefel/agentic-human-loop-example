@@ -86,6 +86,25 @@ describe("cancelRun", () => {
     expect(await repo.getApproval(approval.id)).toMatchObject({ status: "rejected", reason: "run cancelled", decided_by: GP_ID });
     expect((await repo.getRun(run.id)).status).toBe("cancelled");
   });
+
+  it("policy_check closes its own approval when a cancel lands while the approval is being inserted", async () => {
+    const repo = new MemoryRepo();
+    const run = await start(repo, "pawprint"); // L2 → awaiting_approval (l2.over_threshold)
+    // Race: the cancel commits after policy_check's pre-insert re-check but before the row exists,
+    // so cancelRun finds no pending approval to reject. The post-insert re-check must close it.
+    const insert = repo.addApproval.bind(repo);
+    repo.addApproval = async (a) => {
+      await cancelRun(repo, run.id, GP);
+      return insert(a);
+    };
+    await runToRest(repo, run.id); // returns the run as policy_check committed it; effects ran after
+    expect((await repo.getRun(run.id)).status).toBe("cancelled");
+    const approvals = repo.approvals.filter((a) => a.run_id === run.id);
+    expect(approvals).toHaveLength(1);
+    expect(approvals[0]).toMatchObject({ status: "rejected", reason: "run cancelled", decided_by: null, is_override: false });
+    expect(repo.auditLog.filter((e) => e.action === "approval.requested")).toHaveLength(0);
+    expect(repo.auditLog.find((e) => e.action === "run.cancelled")?.details).not.toHaveProperty("approval_id");
+  });
 });
 
 describe("resumeRun", () => {

@@ -4,15 +4,15 @@
  * Runs snapshot `config_version` at creation (createRun), so older runs keep their version.
  */
 import { HarnessConfigSchema } from "@/lib/schemas";
-import { TOOL_NAMES } from "@/lib/tools";
+import { TOOL_NAMES } from "@/lib/tools/catalog";
 import { diffConfigs } from "@/lib/config-diff";
-import type { AgentId, ConfigDraft, HarnessConfig, User } from "@/lib/types";
+import type { ConfigDraft, HarnessConfig, User } from "@/lib/types";
 import type { Repo } from "./repo";
 import { actor } from "./audit";
 import { ForbiddenError, ValidationError } from "./errors";
+import { CONFIG_AGENTS, DATA_SCOPES } from "./config-constants";
 
-export const CONFIG_AGENTS: AgentId[] = ["lead", "market", "finance", "product", "skeptic"];
-export const DATA_SCOPES = ["pitch", "market", "financials", "deals", "portfolio", "memories"] as const;
+export { CONFIG_AGENTS, DATA_SCOPES };
 
 /** Strips the version metadata, leaving the editable draft. */
 export function toDraft(c: HarnessConfig): ConfigDraft {

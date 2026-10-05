@@ -4,8 +4,8 @@ import { Lock, TriangleAlert } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { TOOL_DATA_SCOPE, TOOL_NAMES } from "@/lib/tools";
-import { CONFIG_AGENTS, DATA_SCOPES } from "@/lib/harness/config";
+import { TOOL_DATA_SCOPE, TOOL_NAMES } from "@/lib/tools/catalog";
+import { CONFIG_AGENTS, DATA_SCOPES } from "@/lib/harness/config-constants";
 import type { ConfigDraft } from "@/lib/types";
 import { cn } from "cn";
 
