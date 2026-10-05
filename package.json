@@ -8,11 +8,13 @@
     "start": "next start",
     "lint": "eslint",
     "test": "vitest run",
+    "mcp": "tsx mcp/server.ts",
     "db:reset": "node scripts/db-reset.mjs",
     "demo:seed": "NODE_OPTIONS=--conditions=react-server tsx scripts/demo-data.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.131.0",
+    "@modelcontextprotocol/sdk": "^1.32.0",
     "@supabase/ssr": "^0.12.7",
     "@supabase/supabase-js": "^2.117.2",
     "class-variance-authority": "^0.7.1",
