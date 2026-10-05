@@ -1,6 +1,7 @@
 import { AppSidebar } from "@/components/app-sidebar";
 import { Topbar } from "@/components/topbar";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { Toaster } from "@/components/ui/sonner";
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
 import { getActingUser, listUsers } from "@/lib/current-user";
 import { getNavCounts } from "@/lib/counts";
@@ -12,13 +13,14 @@ export default async function ShellLayout({ children }: { children: React.ReactN
   const [current, users, counts] = await Promise.all([getActingUser(), listUsers(), getNavCounts()]);
   return (
     <TooltipProvider>
-    <SidebarProvider>
-      <AppSidebar {...counts} />
-      <SidebarInset>
-        <Topbar current={current} users={users} mock={isMockMode()} />
-        <div className="flex-1 p-6">{children}</div>
-      </SidebarInset>
-    </SidebarProvider>
+      <SidebarProvider>
+        <AppSidebar {...counts} />
+        <SidebarInset>
+          <Topbar current={current} users={users} mock={isMockMode()} />
+          <div className="flex-1 p-6">{children}</div>
+        </SidebarInset>
+      </SidebarProvider>
+      <Toaster />
     </TooltipProvider>
   );
 }

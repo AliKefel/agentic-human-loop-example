@@ -7,7 +7,7 @@ import { SidebarMenuBadge, SidebarMenuButton, SidebarMenuItem } from "@/componen
 
 export function NavLink({ href, label, icon: Icon, badge }: { href: string; label: string; icon: LucideIcon; badge?: number }) {
   const pathname = usePathname();
-  const active = href === "/" ? pathname === "/" : pathname.startsWith(href);
+  const active = href === "/" ? pathname === "/" : pathname === href || pathname.startsWith(href + "/");
   return (
     <SidebarMenuItem>
       <SidebarMenuButton asChild isActive={active} tooltip={label}>

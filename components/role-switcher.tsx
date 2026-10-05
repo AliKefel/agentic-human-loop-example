@@ -2,6 +2,7 @@
 
 import { useTransition } from "react";
 import { Check } from "lucide-react";
+import { toast } from "sonner";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
@@ -38,7 +39,7 @@ export function RoleSwitcher({ current, users }: { current: User; users: User[] 
         <DropdownMenuLabel>Acting as</DropdownMenuLabel>
         <DropdownMenuSeparator />
         {users.map((u) => (
-          <DropdownMenuItem key={u.id} onSelect={() => start(() => setActingUser(u.id))} className="gap-2">
+          <DropdownMenuItem key={u.id} onSelect={() => start(async () => { try { await setActingUser(u.id); } catch (e) { console.error(e); toast.error("Could not switch user"); } })} className="gap-2">
             <UserAvatar user={u} />
             <span className="flex-1 leading-tight">
               <span className="block text-sm">{u.name}</span>

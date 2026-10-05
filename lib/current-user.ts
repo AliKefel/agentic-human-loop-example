@@ -21,12 +21,22 @@ export function resolveActingUser(users: User[], cookieId: string | undefined): 
   );
 }
 
+export function assertKnownUser(users: User[], id: string): User {
+  const u = users.find((x) => x.id === id);
+  if (!u) throw new Error("Unknown user");
+  return u;
+}
+
 export async function listUsers(): Promise<User[]> {
   try {
     const { data, error } = await createAdminClient().from("users").select("*").order("id");
-    if (error || !data || data.length === 0) return FALLBACK_USERS;
+    if (error || !data || data.length === 0) {
+      console.warn("listUsers: using fallback users", error?.message ?? "no rows");
+      return FALLBACK_USERS;
+    }
     return data as User[];
-  } catch {
+  } catch (e) {
+    console.warn("listUsers: using fallback users", e);
     return FALLBACK_USERS;
   }
 }

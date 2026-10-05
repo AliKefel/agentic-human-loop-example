@@ -8,3 +8,9 @@ test("defaults to Pat Partner when cookie missing or unknown", () => {
 test("honours a valid cookie", () => {
   expect(resolveActingUser(FALLBACK_USERS, FALLBACK_USERS[2].id).name).toBe("Gen GP");
 });
+
+import { assertKnownUser } from "@/lib/current-user";
+test("assertKnownUser rejects unknown ids", () => {
+  expect(() => assertKnownUser(FALLBACK_USERS, "bogus")).toThrow("Unknown user");
+  expect(assertKnownUser(FALLBACK_USERS, FALLBACK_USERS[0].id).name).toBe("Avery Analyst");
+});
