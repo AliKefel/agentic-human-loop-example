@@ -14,3 +14,8 @@ supabase/.branches/
 *.log
 coverage/
 .superpowers/
+*.pem
+.vercel
+*.tsbuildinfo
+next-env.d.ts
+.pnpm-debug.log*
