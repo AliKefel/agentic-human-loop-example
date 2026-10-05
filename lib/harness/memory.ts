@@ -57,9 +57,5 @@ export async function rememberOutcome(repo: Repo, run: Run, pitch: Pitch): Promi
 
 /** Memories a run used, in recorded order (ids that no longer exist are skipped). For the run page. */
 export async function loadMemoriesUsed(repo: Repo, run: Run): Promise<MemoryRow[]> {
-  const ids = new Set(run.state.memories_used);
-  if (!ids.size) return [];
-  const all = await repo.listMemories();
-  const byId = new Map(all.map((m) => [m.id, m]));
-  return run.state.memories_used.flatMap((id) => byId.get(id) ?? []);
+  return repo.getMemoriesByIds([...new Set(run.state.memories_used)]);
 }

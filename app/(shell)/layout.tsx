@@ -15,9 +15,9 @@ export default async function ShellLayout({ children }: { children: React.ReactN
     <TooltipProvider>
       <SidebarProvider>
         <AppSidebar {...counts} />
-        <SidebarInset>
+        <SidebarInset className="min-w-0">
           <Topbar current={current} users={users} mock={isMockMode()} />
-          <div className="flex-1 p-6">{children}</div>
+          <div className="min-w-0 flex-1 p-4 sm:p-6">{children}</div>
         </SidebarInset>
       </SidebarProvider>
       <Toaster />

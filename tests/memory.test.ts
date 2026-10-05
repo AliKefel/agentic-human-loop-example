@@ -4,7 +4,7 @@ import { createRun, cancelRun } from "@/lib/harness/runs";
 import { runToRest } from "@/lib/harness/machine";
 import { decideApproval } from "@/lib/harness/approvals";
 import { ConflictError } from "@/lib/harness/errors";
-import { formatMemories, memoriesForPlanning, memoriesForSynthesis, rememberOutcome } from "@/lib/harness/memory";
+import { formatMemories, memoriesForPlanning, memoriesForSynthesis } from "@/lib/harness/memory";
 import { withState, checkpointSnapshot } from "@/lib/harness/run-state";
 import { GP_ID, PARTNER_ID, SEED_USERS } from "@/lib/mock/seed-users";
 
@@ -82,7 +82,6 @@ describe("memory", () => {
     const r2 = await createRun(repo, { pitchId: p2.id, autonomyLevel: 2, user: GP });
     await cancelRun(repo, r2.id, GP);
     expect(repo.memories.length).toBe(before);
-    await rememberOutcome(repo, await repo.getRun(r2.id), p2); // direct call still works for terminal helpers
   });
 
   it("human approval of a waiting run writes a founder memory", async () => {

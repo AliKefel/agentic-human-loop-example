@@ -156,13 +156,23 @@ export class MemoryRepo implements Repo {
     return clone({ seq: top.seq, node: top.node, state: top.state as any });
   }
 
+  async listCheckpoints(runId: string) {
+    return this._checkpoints.filter((x) => x.run_id === runId).sort((a, b) => a.seq - b.seq).map(clone);
+  }
+
   async addAgentCall(a: Omit<AgentCallRow, "id" | "created_at">) {
     const id = randomUUID();
     this._agentCalls.push({ ...clone(a), id, created_at: new Date().toISOString() });
     return id;
   }
+  async listAgentCalls(runId: string) {
+    return this._agentCalls.filter((x) => x.run_id === runId).map(clone); // insertion order = oldest first
+  }
   async addToolCall(t: Omit<ToolCallRow, "id" | "created_at">) {
     this._toolCalls.push({ ...clone(t), id: randomUUID(), created_at: new Date().toISOString() });
+  }
+  async listToolCalls(runId: string) {
+    return this._toolCalls.filter((x) => x.run_id === runId).map(clone);
   }
 
   async addApproval(a: Omit<ApprovalRow, "id" | "created_at" | "status" | "decided_by" | "reason" | "decided_at" | "final_terms" | "is_override">) {
@@ -185,6 +195,10 @@ export class MemoryRepo implements Repo {
   async pendingApprovalForRun(runId: string) {
     const a = this._approvals.filter((x) => x.run_id === runId && x.status === "pending").at(-1);
     return a ? clone(a) : null;
+  }
+
+  async listApprovalsForRun(runId: string) {
+    return this._approvals.filter((x) => x.run_id === runId).map(clone);
   }
 
   async listApprovals(filter: { status?: "pending" | "decided"; kind?: ApprovalRow["kind"] } = {}): Promise<ApprovalQueueRow[]> {
@@ -219,6 +233,11 @@ export class MemoryRepo implements Repo {
       .map((x) => x.m)
       .slice(0, q.limit ?? 10)
       .map(clone);
+  }
+
+  async getMemoriesByIds(ids: string[]) {
+    const byId = new Map(this._memories.map((m) => [m.id, m]));
+    return ids.flatMap((id) => { const m = byId.get(id); return m ? [clone(m)] : []; });
   }
 
   async listMemories(scope?: "firm" | "founder" | "partner") {

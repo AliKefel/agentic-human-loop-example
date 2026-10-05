@@ -1,5 +1,5 @@
 import "server-only";
-import type { AgentCallRow, ApprovalQueueRow, AuditFilter, AuditRow, ApprovalRow, FounderMessageRow, HarnessConfig, IncidentListRow, IncidentPatch, IncidentRow, MemoryRow, Pitch, Run, ToolCallRow, User } from "@/lib/types";
+import type { AgentCallRow, ApprovalQueueRow, AuditFilter, AuditRow, ApprovalRow, CheckpointRow, FounderMessageRow, HarnessConfig, IncidentListRow, IncidentPatch, IncidentRow, MemoryRow, Pitch, Run, ToolCallRow, User } from "@/lib/types";
 import { SupabaseRepo } from "./repo-supabase";
 
 export interface Repo {
@@ -20,14 +20,22 @@ export interface Repo {
   addCheckpoint(c: { run_id: string; seq: number; node: string; state: unknown; duration_ms: number }): Promise<void>;
   /** Highest-seq checkpoint matching the filter: `excludeNodes` drops by node; `statusIn` keeps only snapshots whose state.status is listed. */
   lastCheckpoint(runId: string, filter?: { excludeNodes?: string[]; statusIn?: string[] }): Promise<{ seq: number; node: string; state: any } | null>;
+  /** The run's checkpoints, seq ascending. */
+  listCheckpoints(runId: string): Promise<CheckpointRow[]>;
   addAgentCall(a: Omit<AgentCallRow, "id" | "created_at">): Promise<string>;
+  /** The run's agent calls, oldest first (created_at, then insertion / id). */
+  listAgentCalls(runId: string): Promise<AgentCallRow[]>;
   addToolCall(t: Omit<ToolCallRow, "id" | "created_at">): Promise<void>;
+  /** The run's tool calls, oldest first (created_at, then insertion / id). */
+  listToolCalls(runId: string): Promise<ToolCallRow[]>;
   addApproval(a: Omit<ApprovalRow, "id" | "created_at" | "status" | "decided_by" | "reason" | "decided_at" | "final_terms" | "is_override">): Promise<ApprovalRow>;
   getApproval(id: string): Promise<ApprovalRow>;
   /** CAS on status='pending'; null if already decided. Unknown id throws NotFoundError. */
   decideApprovalRow(id: string, patch: Pick<ApprovalRow, "status" | "decided_by" | "reason" | "final_terms" | "is_override">): Promise<ApprovalRow | null>;
   /** Newest pending approval for the run, or null. */
   pendingApprovalForRun(runId: string): Promise<ApprovalRow | null>;
+  /** Every approval of the run (any status), oldest first (created_at, then insertion / id). */
+  listApprovalsForRun(runId: string): Promise<ApprovalRow[]>;
   /** Approvals joined with run/pitch fields; status "decided" = anything but pending. Oldest first (created_at, then id). */
   listApprovals(filter?: { status?: "pending" | "decided"; kind?: ApprovalRow["kind"] }): Promise<ApprovalQueueRow[]>;
   addFounderMessage(m: { run_id: string; direction: "to_founder" | "from_founder"; body: string; author_id: string | null }): Promise<void>;
@@ -36,6 +44,8 @@ export interface Repo {
   addMemory(m: { scope: "firm" | "founder" | "partner"; subject: string; sector: string | null; content: string; source_run_id: string | null }): Promise<void>;
   /** Newest first; ties broken by insertion order (later insert first). subject/sector match case-insensitively. */
   findMemories(q: { scope: "firm" | "founder" | "partner"; subject?: string; sector?: string; limit?: number }): Promise<MemoryRow[]>;
+  /** Memories with the given ids, in the requested order; unknown ids are skipped. */
+  getMemoriesByIds(ids: string[]): Promise<MemoryRow[]>;
   /** All memories (optionally one scope), newest first; ties by insertion order (later first). */
   listMemories(scope?: "firm" | "founder" | "partner"): Promise<MemoryRow[]>;
   addIncident(i: Omit<IncidentRow, "id" | "created_at" | "resolved_at" | "status">): Promise<IncidentRow>;

@@ -203,3 +203,56 @@ describe("MemoryRepo.listApprovals", () => {
     expect(msgs.map((m) => [m.direction, m.body])).toEqual([["to_founder", "q"], ["from_founder", "a"]]);
   });
 });
+
+describe("MemoryRepo list-by-run (run detail view)", () => {
+  const call = (runId: string, agent: "market" | "finance", attempt: number) => ({ run_id: runId, agent, purpose: "analyze" as const, model: "m", attempt, fallback_used: false, input_tokens: 1, output_tokens: 1, cost_usd: 0, latency_ms: 1, status: "ok" as const, error: null, output: null });
+
+  it("listCheckpoints returns the run's checkpoints by seq ascending", async () => {
+    const repo = new MemoryRepo();
+    const run = await newRun(repo);
+    const other = await newRun(repo);
+    await repo.addCheckpoint({ run_id: run.id, seq: 2, node: "planning", state: {}, duration_ms: 5 });
+    await repo.addCheckpoint({ run_id: other.id, seq: 1, node: "triage", state: {}, duration_ms: 1 });
+    await repo.addCheckpoint({ run_id: run.id, seq: 1, node: "triage", state: { status: "planning" }, duration_ms: 3 });
+    const rows = await repo.listCheckpoints(run.id);
+    expect(rows.map((c) => [c.seq, c.node])).toEqual([[1, "triage"], [2, "planning"]]);
+    expect(rows[0]).toMatchObject({ run_id: run.id, duration_ms: 3, state: { status: "planning" } });
+    expect(rows[0].id).toBeTruthy();
+    expect(rows[0].created_at).toBeTruthy();
+  });
+
+  it("listAgentCalls / listToolCalls return the run's rows oldest first", async () => {
+    const repo = new MemoryRepo();
+    const run = await newRun(repo);
+    const other = await newRun(repo);
+    const a1 = await repo.addAgentCall(call(run.id, "finance", 1));
+    await repo.addAgentCall(call(other.id, "market", 1));
+    const a2 = await repo.addAgentCall(call(run.id, "finance", 2));
+    expect((await repo.listAgentCalls(run.id)).map((c) => c.id)).toEqual([a1, a2]);
+    await repo.addToolCall({ run_id: run.id, agent_call_id: a1, agent: "finance", tool: "t1", args: {}, result: null, latency_ms: 1, permitted: true });
+    await repo.addToolCall({ run_id: other.id, agent_call_id: null, agent: "market", tool: "tx", args: {}, result: null, latency_ms: 1, permitted: true });
+    await repo.addToolCall({ run_id: run.id, agent_call_id: a2, agent: "finance", tool: "t2", args: {}, result: null, latency_ms: 1, permitted: false });
+    const tools = await repo.listToolCalls(run.id);
+    expect(tools.map((t) => [t.tool, t.permitted])).toEqual([["t1", true], ["t2", false]]);
+  });
+
+  it("listApprovalsForRun returns all of the run's approvals oldest first", async () => {
+    const repo = new MemoryRepo();
+    const run = await newRun(repo);
+    const other = await newRun(repo);
+    const a = await newApproval(repo, run.id);
+    await newApproval(repo, other.id);
+    await repo.decideApprovalRow(a.id, { status: "approved", decided_by: GP, reason: null, final_terms: null, is_override: false });
+    const b = await newApproval(repo, run.id);
+    const rows = await repo.listApprovalsForRun(run.id);
+    expect(rows.map((x) => [x.id, x.status])).toEqual([[a.id, "approved"], [b.id, "pending"]]);
+  });
+
+  it("getMemoriesByIds returns rows in the requested order, skipping unknown ids", async () => {
+    const repo = new MemoryRepo();
+    const [m1, m2] = repo.memories;
+    const got = await repo.getMemoriesByIds([m2.id, "00000000-0000-0000-0000-00000000dead", m1.id]);
+    expect(got.map((m) => m.id)).toEqual([m2.id, m1.id]);
+    expect(await repo.getMemoriesByIds([])).toEqual([]);
+  });
+});

@@ -1,7 +1,7 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { createAdminClient } from "@/lib/supabase/server";
-import type { AgentCallRow, ApprovalQueueRow, AuditFilter, AuditRow, ApprovalRow, FounderMessageRow, HarnessConfig, IncidentListRow, IncidentPatch, IncidentRow, MemoryRow, Pitch, Run, ToolCallRow, User } from "@/lib/types";
+import type { AgentCallRow, ApprovalQueueRow, AuditFilter, AuditRow, ApprovalRow, CheckpointRow, FounderMessageRow, HarnessConfig, IncidentListRow, IncidentPatch, IncidentRow, MemoryRow, Pitch, Run, ToolCallRow, User } from "@/lib/types";
 import { NotFoundError } from "./errors";
 import { initialRunState } from "./run-state";
 import type { Repo } from "./repo";
@@ -19,6 +19,7 @@ const toMemory = (r: Row): MemoryRow => r as MemoryRow;
 const toIncident = (r: Row): IncidentRow => r as IncidentRow;
 const toConfig = (r: Row): HarnessConfig => r as HarnessConfig;
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const escapeLike = (s: string) => s.replace(/[\\%_]/g, (c) => `\\${c}`);
 
 export class SupabaseRepo implements Repo {
@@ -93,12 +94,28 @@ export class SupabaseRepo implements Repo {
     return data ? { seq: data.seq as number, node: data.node as string, state: data.state } : null;
   }
 
+  async listCheckpoints(runId: string) {
+    const { data, error } = await this.db.from("checkpoints").select("*").eq("run_id", runId).order("seq", { ascending: true });
+    if (error) this.fail("checkpoints", "select", error);
+    return (data ?? []) as CheckpointRow[];
+  }
+
   async addAgentCall(a: Omit<AgentCallRow, "id" | "created_at">) {
     return (await this.insert("agent_calls", a)).id as string;
+  }
+  async listAgentCalls(runId: string) {
+    const { data, error } = await this.db.from("agent_calls").select("*").eq("run_id", runId).order("created_at", { ascending: true }).order("id", { ascending: true });
+    if (error) this.fail("agent_calls", "select", error);
+    return (data ?? []).map(toAgentCall);
   }
   async addToolCall(t: Omit<ToolCallRow, "id" | "created_at">) {
     const { error } = await this.db.from("tool_calls").insert(t);
     if (error) this.fail("tool_calls", "insert", error);
+  }
+  async listToolCalls(runId: string) {
+    const { data, error } = await this.db.from("tool_calls").select("*").eq("run_id", runId).order("created_at", { ascending: true }).order("id", { ascending: true });
+    if (error) this.fail("tool_calls", "select", error);
+    return (data ?? []) as ToolCallRow[];
   }
 
   async addApproval(a: Omit<ApprovalRow, "id" | "created_at" | "status" | "decided_by" | "reason" | "decided_at" | "final_terms" | "is_override">) {
@@ -116,6 +133,12 @@ export class SupabaseRepo implements Repo {
     const { data, error } = await this.db.from("approvals").select("*").eq("run_id", runId).eq("status", "pending").order("created_at", { ascending: false }).limit(1).maybeSingle();
     if (error) this.fail("approvals", "select", error);
     return data ? toApproval(data) : null;
+  }
+
+  async listApprovalsForRun(runId: string) {
+    const { data, error } = await this.db.from("approvals").select("*").eq("run_id", runId).order("created_at", { ascending: true }).order("id", { ascending: true });
+    if (error) this.fail("approvals", "select", error);
+    return (data ?? []).map(toApproval);
   }
 
   async listApprovals(filter: { status?: "pending" | "decided"; kind?: ApprovalRow["kind"] } = {}): Promise<ApprovalQueueRow[]> {
@@ -150,6 +173,15 @@ export class SupabaseRepo implements Repo {
     const { data, error } = await b.order("created_at", { ascending: false }).order("id", { ascending: false }).limit(q.limit ?? 10);
     if (error) this.fail("memories", "select", error);
     return (data ?? []).map(toMemory);
+  }
+
+  async getMemoriesByIds(ids: string[]) {
+    const valid = ids.filter((id) => UUID_RE.test(id)); // a malformed id would make Postgres reject the whole query
+    if (!valid.length) return [];
+    const { data, error } = await this.db.from("memories").select("*").in("id", valid);
+    if (error) this.fail("memories", "select", error);
+    const byId = new Map((data ?? []).map((r: Row) => [r.id as string, toMemory(r)]));
+    return ids.flatMap((id) => byId.get(id) ?? []);
   }
 
   async listMemories(scope?: "firm" | "founder" | "partner") {
