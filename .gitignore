@@ -1,0 +1,21 @@
+# deps
+node_modules/
+# next
+.next/
+out/
+# env
+.env*.local
+.env
+# supabase
+supabase/.temp/
+supabase/.branches/
+# misc
+.DS_Store
+*.log
+coverage/
+.superpowers/
+*.pem
+.vercel
+*.tsbuildinfo
+next-env.d.ts
+.pnpm-debug.log*
