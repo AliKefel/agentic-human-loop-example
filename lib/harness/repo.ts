@@ -1,5 +1,5 @@
 import "server-only";
-import type { AgentCallRow, ApprovalQueueRow, AuditFilter, AuditRow, ApprovalRow, CheckpointRow, FounderMessageRow, HarnessConfig, IncidentListRow, IncidentPatch, IncidentRow, MemoryRow, Pitch, Run, ToolCallRow, User } from "@/lib/types";
+import type { AgentCallRow, ConfigDraft, SimulationRun, ApprovalQueueRow, AuditFilter, AuditRow, ApprovalRow, CheckpointRow, FounderMessageRow, HarnessConfig, IncidentListRow, IncidentPatch, IncidentRow, MemoryRow, Pitch, Run, ToolCallRow, User } from "@/lib/types";
 import { SupabaseRepo } from "./repo-supabase";
 
 export interface Repo {
@@ -12,9 +12,15 @@ export interface Repo {
   latestRunsByPitch(): Promise<Record<string, Pick<Run, "id" | "status" | "started_at">>>;
   getConfig(version: number): Promise<HarnessConfig>;
   getActiveConfig(): Promise<HarnessConfig>;
+  /** Every config version, newest (highest version) first. */
+  listConfigs(): Promise<HarnessConfig[]>;
+  /** Atomically: version = max + 1, deactivate the active config, insert `draft` as the new active config. Returns the new row. */
+  insertConfigActivate(draft: ConfigDraft, createdBy: string): Promise<HarnessConfig>;
   getUser(id: string): Promise<User>;
-  /** The most recent `limit` runs, newest first (started_at, then insertion / id — later first). */
+  /** The most recent `limit` runs, newest first (started_at, then insertion / id — later first). Heavy columns are omitted: `plan` is null and `state` is an empty initial state. */
   listRuns(limit: number): Promise<Run[]>;
+  /** The most recent `limit` settled runs (status not in WORKING), newest first, with only the columns the what-if simulator needs. */
+  listRunsForSimulation(limit: number): Promise<SimulationRun[]>;
   createRun(r: Pick<Run, "pitch_id" | "config_version" | "autonomy_level" | "started_by">): Promise<Run>;
   getRun(id: string): Promise<Run>;
   /** compare-and-set: applies only if expectStep is undefined or run.step_count === expectStep; returns the updated run, or null if the CAS was lost. Unknown id throws NotFoundError (null never means "not found"). There is NO terminal-status guard: callers bump step_count to invalidate in-flight steps. */

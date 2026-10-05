@@ -1,9 +1,10 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { createAdminClient } from "@/lib/supabase/server";
-import type { AgentCallRow, ApprovalQueueRow, AuditFilter, AuditRow, ApprovalRow, CheckpointRow, FounderMessageRow, HarnessConfig, IncidentListRow, IncidentPatch, IncidentRow, MemoryRow, Pitch, Run, ToolCallRow, User } from "@/lib/types";
+import type { AgentCallRow, ConfigDraft, SimulationRun, ApprovalQueueRow, AuditFilter, AuditRow, ApprovalRow, CheckpointRow, FounderMessageRow, HarnessConfig, IncidentListRow, IncidentPatch, IncidentRow, MemoryRow, Pitch, Run, ToolCallRow, User } from "@/lib/types";
 import { NotFoundError } from "./errors";
 import { initialRunState } from "./run-state";
+import { WORKING } from "@/lib/types";
 import type { Repo } from "./repo";
 
 type Row = Record<string, any>;
@@ -24,6 +25,9 @@ const PAGE = 1000;
 const ID_CHUNK = 100;
 const AGENT_CALL_COLS = "id,run_id,agent,purpose,model,attempt,fallback_used,input_tokens,output_tokens,cost_usd,latency_ms,status,error,created_at";
 const TOOL_CALL_COLS = "id,run_id,agent_call_id,agent,tool,latency_ms,permitted,created_at";
+/** listRuns columns: everything but the heavy plan / state jsonb (the dashboard never reads them). */
+const RUN_LIST_COLS = "id,pitch_id,config_version,autonomy_level,status,degraded,replans,step_count,tokens_used,cost_usd,decision,recommendation,final_terms,started_by,started_at,completed_at,error";
+const SIM_RUN_COLS = "id,state,degraded,autonomy_level,status,started_at";
 const byCreatedThenId = (a: { created_at: string; id: string }, b: { created_at: string; id: string }) =>
   Date.parse(a.created_at) - Date.parse(b.created_at) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
 
@@ -88,15 +92,38 @@ export class SupabaseRepo implements Repo {
   }
   async getConfig(version: number) { return toConfig(await this.one("harness_configs", "version", version)); }
   async getActiveConfig() { return toConfig(await this.one("harness_configs", "is_active", "true")); }
+  async listConfigs() {
+    const { data, error } = await this.db.from("harness_configs").select("*").order("version", { ascending: false });
+    if (error) this.fail("harness_configs", "select", error);
+    return (data ?? []).map(toConfig);
+  }
+  async insertConfigActivate(draft: ConfigDraft, createdBy: string) {
+    // One transaction in SQL (migration 0004): deactivate the active row, insert version max+1 as active.
+    const { data, error } = await this.db.rpc("publish_config", { p: draft, p_user: createdBy });
+    if (error) this.fail("harness_configs", "publish_config", error);
+    if (!data) throw new Error("harness_configs: publish_config returned no row");
+    return toConfig(data as Row);
+  }
   async getUser(id: string) { return toUser(await this.one("users", "id", id)); }
 
   async listRuns(limit: number) {
     const out: Run[] = [];
     for (let from = 0; from < limit; from += PAGE) {
       const to = Math.min(limit, from + PAGE) - 1;
-      const { data, error } = await this.db.from("runs").select("*").order("started_at", { ascending: false }).order("id", { ascending: false }).range(from, to);
+      const { data, error } = await this.db.from("runs").select(RUN_LIST_COLS).order("started_at", { ascending: false }).order("id", { ascending: false }).range(from, to);
       if (error) this.fail("runs", "select", error);
-      out.push(...(data ?? []).map(toRun));
+      out.push(...(data ?? []).map((r) => toRun({ ...r, plan: null, state: initialRunState() })));
+      if (!data || data.length < to - from + 1) break;
+    }
+    return out;
+  }
+  async listRunsForSimulation(limit: number): Promise<SimulationRun[]> {
+    const out: SimulationRun[] = [];
+    for (let from = 0; from < limit; from += PAGE) {
+      const to = Math.min(limit, from + PAGE) - 1;
+      const { data, error } = await this.db.from("runs").select(SIM_RUN_COLS).not("status", "in", `(${WORKING.join(",")})`).order("started_at", { ascending: false }).order("id", { ascending: false }).range(from, to);
+      if (error) this.fail("runs", "select", error);
+      out.push(...((data ?? []) as unknown as SimulationRun[]));
       if (!data || data.length < to - from + 1) break;
     }
     return out;

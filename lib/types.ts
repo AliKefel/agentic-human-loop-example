@@ -12,7 +12,9 @@ export type Role = "analyst" | "partner" | "general_partner";
 export type Terms = { amount: number; equity_pct: number };
 export type User = { id: string; name: string; role: Role; approval_limit: number; avatar_color: string };
 export type Pitch = { id: string; slug: string; company: string; tagline: string; founder: string; sector: string; ask_amount: number; equity_offered: number; revenue: number; claimed_revenue: number | null; growth_pct: number; monthly_burn: number; pitch_text: string; chaos: Record<string, string>; created_at: string };
-export type HarnessConfig = z.infer<typeof HarnessConfigSchema> & { id: string; version: number; is_active: boolean; created_at: string; created_by: string | null };
+/** The editable part of a harness config (what a GP publishes). */
+export type ConfigDraft = z.infer<typeof HarnessConfigSchema>;
+export type HarnessConfig = ConfigDraft & { id: string; version: number; is_active: boolean; created_at: string; created_by: string | null };
 export type RunState = {
   prescan?: RedFlag[];
   triage?: { fast_pass: boolean; reason: string };
@@ -27,6 +29,9 @@ export type RunState = {
 export type PolicyOutcome = "auto_send" | "auto_pass" | "needs_approval" | "exception" | "escalate" | "need_info";
 export type PolicyDecision = { outcome: PolicyOutcome; rule: string; required_role?: Role; explanation: string };
 export type Run = { id: string; pitch_id: string; config_version: number; autonomy_level: 0 | 1 | 2 | 3; status: RunStatus; plan: Plan | null; state: RunState; degraded: boolean; replans: number; step_count: number; tokens_used: number; cost_usd: number; decision: PolicyDecision | null; recommendation: "invest" | "pass" | null; final_terms: Terms | null; started_by: string | null; started_at: string; completed_at: string | null; error: string | null };
+
+/** The run columns the what-if simulator reads (Repo.listRunsForSimulation). */
+export type SimulationRun = Pick<Run, "id" | "state" | "degraded" | "autonomy_level" | "status" | "started_at">;
 
 export type AgentCallRow = { id: string; run_id: string; agent: AgentId; purpose: Purpose; model: string; attempt: number; fallback_used: boolean; input_tokens: number; output_tokens: number; cost_usd: number; latency_ms: number; status: "ok" | "timeout" | "error" | "schema_fail" | "skipped_budget"; error: string | null; output: unknown | null; created_at: string };
 export type ToolCallRow = { id: string; run_id: string; agent_call_id: string | null; agent: string; tool: string; args: Record<string, unknown>; result: unknown | null; latency_ms: number; permitted: boolean; created_at: string };

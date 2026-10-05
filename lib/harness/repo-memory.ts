@@ -1,10 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { NotFoundError } from "./errors";
 import { initialRunState } from "./run-state";
+import { WORKING } from "@/lib/types";
 import { SEED_USERS } from "@/lib/mock/seed-users";
 import { CONFIG_V1 } from "@/lib/mock/seed-config";
 import { SEED_PITCHES } from "@/lib/mock/seed-pitches";
-import type { AgentCallRow, ApprovalQueueRow, ApprovalRow, AuditFilter, AuditRow, CheckpointRow, FounderMessageRow, HarnessConfig, IncidentListRow, IncidentPatch, IncidentRow, MemoryRow, Pitch, Run, ToolCallRow, User } from "@/lib/types";
+import type { AgentCallRow, ConfigDraft, SimulationRun, ApprovalQueueRow, ApprovalRow, AuditFilter, AuditRow, CheckpointRow, FounderMessageRow, HarnessConfig, IncidentListRow, IncidentPatch, IncidentRow, MemoryRow, Pitch, Run, ToolCallRow, User } from "@/lib/types";
 import type { Repo } from "./repo";
 
 const SEED_MEMORIES: Omit<MemoryRow, "id" | "created_at" | "source_run_id">[] = [
@@ -98,18 +99,38 @@ export class MemoryRepo implements Repo {
     if (!c) throw new Error("harness_configs: no active config");
     return clone(c);
   }
+  async listConfigs() {
+    return [...this.configs].sort((a, b) => b.version - a.version).map(clone);
+  }
+  async insertConfigActivate(draft: ConfigDraft, createdBy: string) {
+    // No await between read and writes: atomic in-process.
+    const version = Math.max(0, ...this.configs.map((c) => c.version)) + 1;
+    const row: HarnessConfig = { ...clone(draft), notes: draft.notes ?? null, id: randomUUID(), version, is_active: true, created_by: createdBy, created_at: new Date().toISOString() };
+    this.configs = this.configs.map((c) => (c.is_active ? { ...c, is_active: false } : c));
+    this.configs.push(row);
+    return clone(row);
+  }
   async getUser(id: string) {
     const u = this.users.find((x) => x.id === id);
     if (!u) throw new NotFoundError("users", id);
     return clone(u);
   }
 
-  async listRuns(limit: number) {
+  private newestRuns(): Run[] {
     return this._runs
       .map((r, idx) => ({ r, idx }))
       .sort((a, b) => (a.r.started_at < b.r.started_at ? 1 : a.r.started_at > b.r.started_at ? -1 : b.idx - a.idx))
+      .map((x) => x.r);
+  }
+  async listRuns(limit: number) {
+    // Mirrors SupabaseRepo: plan / state are not fetched.
+    return this.newestRuns().slice(0, limit).map((r) => ({ ...clone(r), plan: null, state: initialRunState() }));
+  }
+  async listRunsForSimulation(limit: number): Promise<SimulationRun[]> {
+    return this.newestRuns()
+      .filter((r) => !WORKING.includes(r.status))
       .slice(0, limit)
-      .map((x) => clone(x.r));
+      .map((r) => ({ id: r.id, state: clone(r.state), degraded: r.degraded, autonomy_level: r.autonomy_level, status: r.status, started_at: r.started_at }));
   }
   async createRun(r: Pick<Run, "pitch_id" | "config_version" | "autonomy_level" | "started_by">) {
     const run: Run = {

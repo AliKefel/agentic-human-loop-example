@@ -269,6 +269,19 @@ describe("MemoryRepo list-by-run (run detail view)", () => {
     expect(await new MemoryRepo().listRuns(5)).toEqual([]);
   });
 
+  it("listRuns omits the heavy plan/state columns; listRunsForSimulation keeps state but only settled runs", async () => {
+    const repo = new MemoryRepo();
+    const a = await newRun(repo);
+    const b = await newRun(repo);
+    await repo.updateRun(a.id, { status: "offer_sent", plan: { tasks: [] } as never, state: { ...initialRunState(), founder_asked: true } });
+    const [la] = (await repo.listRuns(10)).filter((r) => r.id === a.id);
+    expect(la).toMatchObject({ status: "offer_sent", plan: null, state: initialRunState() });
+    const sim = await repo.listRunsForSimulation(10);
+    expect(sim.map((r) => r.id)).toEqual([a.id]); // b is still queued
+    expect(sim[0]).toEqual({ id: a.id, state: { ...initialRunState(), founder_asked: true }, degraded: false, autonomy_level: 2, status: "offer_sent", started_at: sim[0].started_at });
+    expect(b.status).toBe("queued");
+  });
+
   it("bulk lists for a set of runs: approvals (full rows), agent/tool calls (payloads stripped), oldest first", async () => {
     const repo = new MemoryRepo();
     const r1 = await newRun(repo);
